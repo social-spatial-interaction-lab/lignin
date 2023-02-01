@@ -32,6 +32,6 @@ class Question(models.Model):
 
 class Value(models.Model):
     column = models.ForeignKey(Column, on_delete=models.CASCADE)
-    creator = models.ForeignKey(LigninUser, on_delete=models.SET_NULL)
+    creator = models.ForeignKey(LigninUser, null=True, on_delete=models.SET_NULL)
     value = models.CharField(max_length=1000)
 
