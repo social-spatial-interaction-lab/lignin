@@ -29,6 +29,7 @@ class Question(models.Model):
     # TODO: figure out perms so this doesn't cascade.
     creator = models.ForeignKey(LigninUser, on_delete=models.CASCADE)
     papers = models.ManyToManyField(Paper, blank=True)
+    rejected_papers = models.TextField(blank=True)
 
 
 class Value(models.Model):

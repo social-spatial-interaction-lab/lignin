@@ -53,10 +53,27 @@ def get_papers(request, question_id):
     return JsonResponse({"data": [x["fields"] for x in json.loads(serialized)]})
 
 
+def reject_paper(request, question_id, paper_id):
+    question = get_object_or_404(Question, id=question_id)
+
+    # if it's already there, ignore the request.
+    if paper_id in question.rejected_papers:
+        return HttpResponse(204)
+
+    # Otherwise, add the paper (with perhaps a space)
+    if question.rejected_papers:
+        question.rejected_papers += " " + paper_id
+    else:
+        question.rejected_papers = paper_id
+    question.save()
+    return HttpResponse(201)
+
+
 def get_snowball(request, question_id):
     question = get_object_or_404(Question, id=question_id)
     included_papers = question.papers.all()
-    included_paper_ids = [x.ssPaperID for x in included_papers]
+    rejected_paper_ids = question.rejected_papers.split(" ") if question.rejected_papers else []
+    ignored_paper_ids = [x.ssPaperID for x in included_papers] + rejected_paper_ids
     id_strings = [x.references.split(" ") + x.citations.split(" ") for x in included_papers]
     snowball_set_size = len(id_strings)
 
@@ -66,7 +83,7 @@ def get_snowball(request, question_id):
             d[paper_id] += 1
 
     most_refs = sorted(d.items(), key=lambda item: item[1], reverse=True)
-    most_refs_filtered = [x for x in most_refs if x[0] not in included_paper_ids]
+    most_refs_filtered = [x for x in most_refs if x[0] not in ignored_paper_ids]
     print(most_refs)
     print(most_refs_filtered)
 

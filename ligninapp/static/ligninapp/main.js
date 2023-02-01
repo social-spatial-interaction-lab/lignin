@@ -15,10 +15,22 @@ function addPaper() {
         type: 'PUT',
         success: function(result) {
             reloadPapers();
-            const target = $(thisButton).closest('tr');
-            console.log(thisButton);
-            console.log(target)
-            target.remove();
+            $(thisButton).closest('tr').remove();
+        }
+    });
+}
+
+function rejectPaper() {
+let paperId = $(this).attr("data-lignin-paperId");
+    const thisButton = this;
+    $.ajax({
+        url: '/question/' + questionID + '/papers/reject/' + paperId + '/',
+        headers: {
+            'X-CSRFToken': csrftoken
+        },
+        type: 'PUT',
+        success: function(result) {
+            $(thisButton).closest('tr').remove();
         }
     });
 }
@@ -75,8 +87,8 @@ $("#snowball").submit(function() {
         function( data ) {
             const table = arrayToTable(data.data, {
                 "Title" : titleAndLink,
-                "add?" : entry => $("<td>").append($("<button>").text("add").attr("data-lignin-paperId", entry["paperId"]).click(addPaper))
-                //"reject?" : entry => $("<td>").append($("<button>").text("reject").attr("data-lignin-paperId", entry["paperId"]).click(rejectPaper))
+                "add?" : entry => $("<td>").append($("<button>").text("add").attr("data-lignin-paperId", entry["paperId"]).click(addPaper)),
+                "reject?" : entry => $("<td>").append($("<button>").text("reject").attr("data-lignin-paperId", entry["paperId"]).click(rejectPaper))
             }, ['paperId', 'url', 'title']);
             snowballResults.empty();
             snowballResults.append(table);
