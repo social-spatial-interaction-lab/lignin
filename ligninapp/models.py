@@ -31,6 +31,9 @@ class Question(models.Model):
     papers = models.ManyToManyField(Paper, blank=True)
     rejected_papers = models.TextField(blank=True)
 
+    def __str__(self):
+        return f'"{self.question_text}" by {self.creator}'
+
 
 class Value(models.Model):
     column = models.ForeignKey(Column, on_delete=models.CASCADE)

@@ -13,8 +13,9 @@ def index(request):
 
 
 def get_question(request, question_id):
-    print(question_id)
+    question = get_object_or_404(Question, id=question_id)
     return render(request, template_name="ligninapp/question.html", context={
+        "question": question,
         "question_id": question_id
     })
 
