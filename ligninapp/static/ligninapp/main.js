@@ -68,12 +68,13 @@ $("#find").submit(function() {
     const queryVal = $("#find-query").val();
 
     $.getJSON(
-        "https://api.semanticscholar.org/graph/v1/paper/search?query=" + encodeURI(queryVal) + "&fields=title,year,authors",
+        "https://api.semanticscholar.org/graph/v1/paper/search?query=" + encodeURI(queryVal) + "&fields=title,year,authors,url",
         {},
         function(data) {
             const table = arrayToTable(data.data, {
+                "Title" : titleAndLink,
                 "add?" : entry => $("<td>").append($("<button>").text("add").attr("data-lignin-paperId", entry["paperId"]).click(addPaper))
-            }, []);
+            }, ["paperId", "url"]);
             findResults.empty();
             findResults.append(table);
         });
