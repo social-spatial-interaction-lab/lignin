@@ -15,6 +15,7 @@ class Paper(models.Model):
     faln = models.CharField(max_length=100)
     references = models.TextField()
     citations = models.TextField()
+    year = models.IntegerField()
 
 
 class Column(models.Model):
