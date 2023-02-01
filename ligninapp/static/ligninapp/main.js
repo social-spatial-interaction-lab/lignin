@@ -48,6 +48,10 @@ function arrayToTable(array, additional, drop) {
     return table;
 }
 
+function titleAndLink(entry) {
+    return $("<td>").append($("<a>").text(entry["title"]).attr("href", entry["url"]).attr("target", "_blank"));
+}
+
 $("#find").submit(function() {
     const queryVal = $("#find-query").val();
 
@@ -70,8 +74,10 @@ $("#snowball").submit(function() {
         '/question/' + questionID + '/snowball/', {},
         function( data ) {
             const table = arrayToTable(data.data, {
+                "Title" : titleAndLink,
                 "add?" : entry => $("<td>").append($("<button>").text("add").attr("data-lignin-paperId", entry["paperId"]).click(addPaper))
-            }, ['paperId', 'url']);
+                //"reject?" : entry => $("<td>").append($("<button>").text("reject").attr("data-lignin-paperId", entry["paperId"]).click(rejectPaper))
+            }, ['paperId', 'url', 'title']);
             snowballResults.empty();
             snowballResults.append(table);
         }
