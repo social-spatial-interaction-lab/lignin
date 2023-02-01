@@ -1,6 +1,7 @@
 const csrftoken = Cookies.get('csrftoken');
 
 const findResults = $("#find-results");
+const paperTable = $("#paper-table");
 
 function addPaper() {
     let paperId = $(this).attr("data-lignin-paperId");
@@ -11,7 +12,7 @@ function addPaper() {
         },
         type: 'PUT',
         success: function(result) {
-            console.log("success");
+            reloadPapers();
         }
     });
 }
@@ -23,7 +24,7 @@ function stringOrFALN(keyname, entry) {
         return entry[keyname];
     }
 }
-function arrayToTable(array, additional) {
+function arrayToTable(array, additional, drop) {
     // additional is key-value pars,
     const dataKeys = Object.keys(array.reduce(function(acc, curr) {Object.keys(curr).forEach(x => acc[x] = true); return acc;}, {}));
     const additionalKeys = Array.from(Object.keys(additional));
@@ -50,7 +51,7 @@ $("#find").submit(function() {
         function(data) {
             const table = arrayToTable(data.data, {
                 "add?" : entry => $("<td>").append($("<button>").text("add").attr("data-lignin-paperId", entry["paperId"]).click(addPaper))
-            });
+            }, []);
             findResults.empty();
             findResults.append(table);
         });
@@ -58,11 +59,16 @@ $("#find").submit(function() {
     return false;
 });
 
-/*
-$.get(
-    '/question/' + questionID + '/papers/', {},
-    function( data ) {
-        const table = arrayToTable(data.data, {})
-    },
-    'json'
-);*/
+function reloadPapers() {
+    $.get(
+        '/question/' + questionID + '/papers/', {},
+        function( data ) {
+            const table = arrayToTable(data.data, {}, ["ssPaperID"]);
+            paperTable.empty();
+            paperTable.append(table);
+        },
+        'json'
+    );
+}
+
+reloadPapers();

@@ -1,5 +1,8 @@
-from django.shortcuts import render
-from django.http import HttpResponse
+import json
+
+from django.shortcuts import render, get_object_or_404
+from django.http import HttpResponse, JsonResponse
+from django.core import serializers
 from .models import Paper, Question
 import requests
 
@@ -7,7 +10,7 @@ def index(request):
     return HttpResponse("Hello, world. You're at the index.")
 
 
-def question(request, question_id):
+def get_question(request, question_id):
     print(question_id)
     return render(request, template_name="ligninapp/question.html", context={
         "question_id": question_id
@@ -40,3 +43,10 @@ def add_paper(request, question_id, paper_id):
     Question.objects.get(id=question_id).papers.add(paper_match)
 
     return HttpResponse(status=201)
+
+
+def get_papers(request, question_id):
+    question = get_object_or_404(Question, id=question_id)
+    serialized = serializers.serialize('json', question.papers.all(), fields=('ssPaperID', 'title', 'year', 'faln'))
+    return JsonResponse({"data": [x["fields"] for x in json.loads(serialized)]})
+
