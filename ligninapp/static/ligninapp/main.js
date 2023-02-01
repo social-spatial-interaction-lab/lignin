@@ -32,7 +32,7 @@ function stringOrFALN(keyname, entry) {
 }
 function arrayToTable(array, additional, drop) {
     // additional is key-value pars,
-    const dataKeys = Object.keys(array.reduce(function(acc, curr) {Object.keys(curr).forEach(x => acc[x] = true); return acc;}, {}));
+    const dataKeys = Object.keys(array.reduce(function(acc, curr) {Object.keys(curr).forEach(x => acc[x] = true); return acc;}, {})).filter(item => !drop.includes(item));
     const additionalKeys = Array.from(Object.keys(additional));
     const table = $("<table>");
     // Create the header row by merging the keys from the data with additional, javascript-defined keys
@@ -71,7 +71,7 @@ $("#snowball").submit(function() {
         function( data ) {
             const table = arrayToTable(data.data, {
                 "add?" : entry => $("<td>").append($("<button>").text("add").attr("data-lignin-paperId", entry["paperId"]).click(addPaper))
-            }, []);
+            }, ['paperId', 'url']);
             snowballResults.empty();
             snowballResults.append(table);
         }
