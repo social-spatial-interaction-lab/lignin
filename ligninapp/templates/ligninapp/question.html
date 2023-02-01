@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+</head>
+<body>
+
+{% load static %}
+
+Question id is {{ question_id }}.
+
+<div>
+    <h3>Find</h3>
+    <form id="find">
+      <label for="find-query">Search: </label><input id="find-query">
+      <input type="submit">
+    </form>
+    <div id="output-div-table"></div>
+</div>
+
+
+<script>
+    const questionID = {{ question_id }};
+</script>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.3/jquery.min.js"></script>
+<script src="{% static 'ligninapp/main.js' %}"></script>
+</body>
+</html>
