@@ -1,11 +1,11 @@
 const csrftoken = Cookies.get('csrftoken');
 
-const outputDivTable = $("#output-div-table");
+const findResults = $("#find-results");
 
 function addPaper() {
     let paperId = $(this).attr("data-lignin-paperId");
     $.ajax({
-        url: '/question/' + questionID + '/add/paper/' + paperId + '/',
+        url: '/question/' + questionID + '/papers/add/' + paperId + '/',
         headers: {
             'X-CSRFToken': csrftoken
         },
@@ -23,26 +23,22 @@ function stringOrFALN(keyname, entry) {
         return entry[keyname];
     }
 }
-function arrayToTable(array, options) {
-    const allKeys = Object.keys(array.reduce(function(acc, curr) {Object.keys(curr).forEach(x => acc[x] = true); return acc;}, {}));
-    console.log(allKeys);
+function arrayToTable(array, additional) {
+    // additional is key-value pars,
+    const dataKeys = Object.keys(array.reduce(function(acc, curr) {Object.keys(curr).forEach(x => acc[x] = true); return acc;}, {}));
+    const additionalKeys = Array.from(Object.keys(additional));
     const table = $("<table>");
-    const headerRow = $("<tr>").append(allKeys.map(keyname => $("<th>").text(keyname)).concat([$("<th>").text("add?")]))// .append($("<td>").append($("<button>")))
-    table.append(headerRow);
+    // Create the header row by merging the keys from the data with additional, javascript-defined keys
+    table.append($("<tr>").append(
+        dataKeys.concat(additionalKeys)
+            .map(keyname => $("<th>").text(keyname))
+        ));
+    // Create each paper row by creating the td cells then merging with the other td cells
     table.append(array.map(entry => $("<tr>").append(
-        allKeys.map(keyname => $("<td>").text(stringOrFALN(keyname, entry))).concat([
-            $("<td>").append($("<button>").text("add").attr("data-lignin-paperId", entry["paperId"]).click(addPaper))
-        ])
+        dataKeys.map(keyname => $("<td>").text(stringOrFALN(keyname, entry)))
+            .concat(additionalKeys.map(keyname => additional[keyname](entry)))
     )));
     return table;
-}
-
-function displayData(data) {
-    console.log(data);
-    const table = arrayToTable(data.data, {thead: true});
-
-    outputDivTable.empty();
-    outputDivTable.append(table);
 }
 
 $("#find").submit(function() {
@@ -51,8 +47,22 @@ $("#find").submit(function() {
     $.getJSON(
         "https://api.semanticscholar.org/graph/v1/paper/search?query=" + encodeURI(queryVal) + "&fields=title,year,authors",
         {},
-        displayData
-        );
+        function(data) {
+            const table = arrayToTable(data.data, {
+                "add?" : entry => $("<td>").append($("<button>").text("add").attr("data-lignin-paperId", entry["paperId"]).click(addPaper))
+            });
+            findResults.empty();
+            findResults.append(table);
+        });
 
     return false;
 });
+
+/*
+$.get(
+    '/question/' + questionID + '/papers/', {},
+    function( data ) {
+        const table = arrayToTable(data.data, {})
+    },
+    'json'
+);*/
