@@ -1,10 +1,19 @@
-
+const csrftoken = Cookies.get('csrftoken');
 
 const outputDivTable = $("#output-div-table");
 
 function addPaper() {
     let paperId = $(this).attr("data-lignin-paperId");
-    console.log(paperId);
+    $.ajax({
+        url: '/question/' + questionID + '/add/paper/' + paperId + '/',
+        headers: {
+            'X-CSRFToken': csrftoken
+        },
+        type: 'PUT',
+        success: function(result) {
+            console.log("success");
+        }
+    });
 }
 
 function stringOrFALN(keyname, entry) {
@@ -17,7 +26,7 @@ function stringOrFALN(keyname, entry) {
 function arrayToTable(array, options) {
     const allKeys = Object.keys(array.reduce(function(acc, curr) {Object.keys(curr).forEach(x => acc[x] = true); return acc;}, {}));
     console.log(allKeys);
-    var table = $("<table>");
+    const table = $("<table>");
     const headerRow = $("<tr>").append(allKeys.map(keyname => $("<th>").text(keyname)).concat([$("<th>").text("add?")]))// .append($("<td>").append($("<button>")))
     table.append(headerRow);
     table.append(array.map(entry => $("<tr>").append(
@@ -30,7 +39,7 @@ function arrayToTable(array, options) {
 
 function displayData(data) {
     console.log(data);
-    var table = arrayToTable(data.data, {thead: true});
+    const table = arrayToTable(data.data, {thead: true});
 
     outputDivTable.empty();
     outputDivTable.append(table);

@@ -10,7 +10,7 @@ class LigninUser(models.Model):
 
 
 class Paper(models.Model):
-    ssPaperID = models.CharField(max_length=50)
+    ssPaperID = models.CharField(max_length=50, unique=True)
     title = models.CharField(max_length=500)
     faln = models.CharField(max_length=100)
     references = models.TextField()
