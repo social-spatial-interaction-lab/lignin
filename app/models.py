@@ -24,10 +24,10 @@ class Column(models.Model):
 
 class Question(models.Model):
     question_text = models.CharField(max_length=200)
-    columns = models.ManyToManyField(Column)
+    columns = models.ManyToManyField(Column, blank=True)
     # TODO: figure out perms so this doesn't cascade.
     creator = models.ForeignKey(LigninUser, on_delete=models.CASCADE)
-    papers = models.ManyToManyField(Paper)
+    papers = models.ManyToManyField(Paper, blank=True)
 
 
 class Value(models.Model):
