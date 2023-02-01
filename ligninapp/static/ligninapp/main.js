@@ -2,9 +2,11 @@ const csrftoken = Cookies.get('csrftoken');
 
 const findResults = $("#find-results");
 const paperTable = $("#paper-table");
+const snowballResults = $("#snowball-results");
 
 function addPaper() {
     let paperId = $(this).attr("data-lignin-paperId");
+    const thisButton = this;
     $.ajax({
         url: '/question/' + questionID + '/papers/add/' + paperId + '/',
         headers: {
@@ -13,6 +15,10 @@ function addPaper() {
         type: 'PUT',
         success: function(result) {
             reloadPapers();
+            const target = $(thisButton).closest('tr');
+            console.log(thisButton);
+            console.log(target)
+            target.remove();
         }
     });
 }
@@ -60,7 +66,17 @@ $("#find").submit(function() {
 });
 
 $("#snowball").submit(function() {
-
+    $.get(
+        '/question/' + questionID + '/snowball/', {},
+        function( data ) {
+            const table = arrayToTable(data.data, {
+                "add?" : entry => $("<td>").append($("<button>").text("add").attr("data-lignin-paperId", entry["paperId"]).click(addPaper))
+            }, []);
+            snowballResults.empty();
+            snowballResults.append(table);
+        }
+    )
+    return false;
 })
 
 function reloadPapers() {

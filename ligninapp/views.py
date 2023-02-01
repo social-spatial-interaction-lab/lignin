@@ -67,11 +67,18 @@ def get_snowball(request, question_id):
 
     most_refs = sorted(d.items(), key=lambda item: item[1], reverse=True)
     most_refs_filtered = [x for x in most_refs if x[0] not in included_paper_ids]
+    print(most_refs)
+    print(most_refs_filtered)
 
     r = requests.post(
-        "https://api.semanticscholar.org/graph/v1/paper/batch?fields=title,year,authors",
-        json={"ids": [x[0] for x in most_refs[:10]]}
+        "https://api.semanticscholar.org/graph/v1/paper/batch?fields=title,year,authors,url",
+        json={"ids": [x[0] for x in most_refs_filtered[:10]]}
     )
 
-    return JsonResponse({"data": r.json()})
+    response = r.json()
+    for paper in response:
+        paper["occurrence_number"] = d[paper['paperId']]
+        paper["occurrence"] = f"{d[paper['paperId']]}/{snowball_set_size}"
+
+    return JsonResponse({"data": sorted(response, key=lambda x: x["occurrence_number"], reverse=True)})
 
