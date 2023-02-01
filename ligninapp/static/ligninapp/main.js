@@ -59,6 +59,10 @@ $("#find").submit(function() {
     return false;
 });
 
+$("#snowball").submit(function() {
+
+})
+
 function reloadPapers() {
     $.get(
         '/question/' + questionID + '/papers/', {},

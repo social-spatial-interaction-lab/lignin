@@ -4,7 +4,9 @@ from django.shortcuts import render, get_object_or_404
 from django.http import HttpResponse, JsonResponse
 from django.core import serializers
 from .models import Paper, Question
+from collections import defaultdict
 import requests
+
 
 def index(request):
     return HttpResponse("Hello, world. You're at the index.")
@@ -49,4 +51,27 @@ def get_papers(request, question_id):
     question = get_object_or_404(Question, id=question_id)
     serialized = serializers.serialize('json', question.papers.all(), fields=('ssPaperID', 'title', 'year', 'faln'))
     return JsonResponse({"data": [x["fields"] for x in json.loads(serialized)]})
+
+
+def get_snowball(request, question_id):
+    question = get_object_or_404(Question, id=question_id)
+    included_papers = question.papers.all()
+    included_paper_ids = [x.ssPaperID for x in included_papers]
+    id_strings = [x.references.split(" ") + x.citations.split(" ") for x in included_papers]
+    snowball_set_size = len(id_strings)
+
+    d = defaultdict(int)
+    for paper_links in id_strings:
+        for paper_id in paper_links:
+            d[paper_id] += 1
+
+    most_refs = sorted(d.items(), key=lambda item: item[1], reverse=True)
+    most_refs_filtered = [x for x in most_refs if x[0] not in included_paper_ids]
+
+    r = requests.post(
+        "https://api.semanticscholar.org/graph/v1/paper/batch?fields=title,year,authors",
+        json={"ids": [x[0] for x in most_refs[:10]]}
+    )
+
+    return JsonResponse({"data": r.json()})
 
