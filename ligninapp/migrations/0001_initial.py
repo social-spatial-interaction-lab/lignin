@@ -44,8 +44,8 @@ class Migration(migrations.Migration):
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
                 ('value', models.CharField(max_length=1000)),
-                ('column', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='app.column')),
-                ('creator', models.ForeignKey(null=True, on_delete=django.db.models.deletion.SET_NULL, to='app.ligninuser')),
+                ('column', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='ligninapp.column')),
+                ('creator', models.ForeignKey(null=True, on_delete=django.db.models.deletion.SET_NULL, to='ligninapp.ligninuser')),
             ],
         ),
         migrations.CreateModel(
@@ -53,14 +53,14 @@ class Migration(migrations.Migration):
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
                 ('question_text', models.CharField(max_length=200)),
-                ('columns', models.ManyToManyField(to='app.column')),
-                ('creator', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='app.ligninuser')),
-                ('papers', models.ManyToManyField(to='app.paper')),
+                ('columns', models.ManyToManyField(to='ligninapp.column')),
+                ('creator', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='ligninapp.ligninuser')),
+                ('papers', models.ManyToManyField(to='ligninapp.paper')),
             ],
         ),
         migrations.AddField(
             model_name='column',
             name='creator',
-            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='app.ligninuser'),
+            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='ligninapp.ligninuser'),
         ),
     ]
