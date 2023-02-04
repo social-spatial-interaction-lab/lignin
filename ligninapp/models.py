@@ -17,10 +17,16 @@ class Paper(models.Model):
     citations = models.TextField()
     year = models.IntegerField()
 
+    def __str__(self):
+        return f"{self.faln} {self.title[:20]}... {self.year}"
+
 
 class Column(models.Model):
     name = models.CharField(max_length=200)
     creator = models.ForeignKey(LigninUser, on_delete=models.CASCADE)
+
+    def __str__(self):
+        return self.name
 
 
 class Question(models.Model):
