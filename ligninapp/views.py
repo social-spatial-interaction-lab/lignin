@@ -3,7 +3,7 @@ import json
 from django.shortcuts import render, get_object_or_404
 from django.http import HttpResponse, JsonResponse
 from django.core import serializers
-from .models import Paper, Question
+from .models import Paper, Question, Value
 from collections import defaultdict
 import requests
 
@@ -48,10 +48,26 @@ def add_paper(request, question_id, paper_id):
     return HttpResponse(status=201)
 
 
+def get_extra_paper_data(question, serialized):
+    # get columns
+    columns = question.columns.all()
+
+    # loop through the serialized files and pull relevant info
+    result = []
+    for x in json.loads(serialized):
+        paper = Paper.objects.get(pk=x["pk"])
+        paper_info = x["fields"]
+        for column in columns:
+            descriptions = Value.objects.filter(column=column, paper=paper)
+            paper_info[column.name] = descriptions[0].value if descriptions else ""
+        result.append(paper_info)
+    return result
+
+
 def get_papers(request, question_id):
     question = get_object_or_404(Question, id=question_id)
     serialized = serializers.serialize('json', question.papers.all(), fields=('ssPaperID', 'title', 'year', 'faln'))
-    return JsonResponse({"data": [x["fields"] for x in json.loads(serialized)]})
+    return JsonResponse({"data": get_extra_paper_data(question, serialized)})
 
 
 def reject_paper(request, question_id, paper_id):
