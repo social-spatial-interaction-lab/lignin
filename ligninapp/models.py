@@ -46,4 +46,7 @@ class Value(models.Model):
     paper = models.ForeignKey(Paper, on_delete=models.CASCADE)
     creator = models.ForeignKey(LigninUser, null=True, on_delete=models.SET_NULL)
     value = models.CharField(max_length=1000)
+    notes = models.TextField(blank=True)
 
+    def __str__(self):
+        return f"{self.column} for {self.paper}: {self.value}"
