@@ -8,5 +8,6 @@ urlpatterns = [
     path('question/<int:question_id>/papers/', views.get_papers),
     path('question/<int:question_id>/papers/add/<paper_id>/', views.add_paper),
     path('question/<int:question_id>/papers/reject/<paper_id>/', views.reject_paper),
-    path('question/<int:question_id>/snowball/', views.get_snowball)
+    path('question/<int:question_id>/snowball/', views.get_snowball),
+    path('values/<paper_id>/<int:column_pk>/', views.edit_annotation)
 ]

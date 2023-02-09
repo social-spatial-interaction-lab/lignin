@@ -62,13 +62,32 @@ def get_extra_paper_data(question, serialized):
             descriptions = Value.objects.filter(column=column, paper=paper)
             paper_info[column.name] = descriptions[0].value if descriptions else ""
         result.append(paper_info)
-    return result
+
+    column_mds = {}
+    for column in columns:
+        column_mds[column.name] = column.pk
+
+    return {
+        "data": result,
+        "column_nums": column_mds
+    }
 
 
 def get_papers(request, question_id):
     question = get_object_or_404(Question, id=question_id)
     serialized = serializers.serialize('json', question.papers.all(), fields=('ssPaperID', 'title', 'year', 'faln', 'url'))
-    return JsonResponse({"data": get_extra_paper_data(question, serialized)})
+    return JsonResponse(get_extra_paper_data(question, serialized))
+
+
+def edit_annotation(request, paper_id, column_pk):
+    # if it already exists, edit it.
+    value_text = request.POST["value_text"]
+    note_text = request.POST["note_text"]
+    print(paper_id)
+    print(column_pk)
+    print(value_text)
+    print(note_text)
+    return HttpResponse(200)
 
 
 def reject_paper(request, question_id, paper_id):
