@@ -16,9 +16,10 @@ class Paper(models.Model):
     references = models.TextField()
     citations = models.TextField()
     year = models.IntegerField()
+    url = models.URLField(blank=True)
 
     def __str__(self):
-        return f"{self.faln} {self.title[:20]}... {self.year}"
+        return f"{self.faln} ({self.year}) {self.title[:20]}..."
 
 
 class Column(models.Model):
