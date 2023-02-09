@@ -1,0 +1,7 @@
+th, td {
+    word-break:keep-all;
+}
+
+body {
+    max-width: 60rem;
+}

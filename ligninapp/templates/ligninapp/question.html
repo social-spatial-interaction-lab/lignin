@@ -1,12 +1,14 @@
 <!DOCTYPE html>
+{% load static %}
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <title>{{ question }}</title>
+    <link rel="stylesheet" href="{% static 'ligninapp/simple-v1.min.css' %}">
+    <link rel="stylesheet" href="{% static 'ligninapp/style.css' %}">
 </head>
 <body>
 
-{% load static %}
 
 <h2>{{ question }}</h2>
 
