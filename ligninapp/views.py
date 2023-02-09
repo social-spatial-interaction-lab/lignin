@@ -38,7 +38,8 @@ def add_paper(request, question_id, paper_id):
             year=int(paper_details['year']),
             faln=paper_details['authors'][0]['name'] + (" et al." if len(paper_details['authors']) > 1 else ""),
             references=" ".join([x["paperId"] for x in paper_details['references'] if x["paperId"]]),
-            citations=" ".join([x["paperId"] for x in paper_details['citations'] if x["paperId"]])
+            citations=" ".join([x["paperId"] for x in paper_details['citations'] if x["paperId"]]),
+            url=f"https://www.semanticscholar.org/paper/{paper_details['paperId']}"
         )
         new_paper.save()
         paper_match = new_paper
@@ -66,7 +67,7 @@ def get_extra_paper_data(question, serialized):
 
 def get_papers(request, question_id):
     question = get_object_or_404(Question, id=question_id)
-    serialized = serializers.serialize('json', question.papers.all(), fields=('ssPaperID', 'title', 'year', 'faln'))
+    serialized = serializers.serialize('json', question.papers.all(), fields=('ssPaperID', 'title', 'year', 'faln', 'url'))
     return JsonResponse({"data": get_extra_paper_data(question, serialized)})
 
 

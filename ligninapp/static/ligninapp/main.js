@@ -102,7 +102,7 @@ function reloadPapers() {
     $.get(
         '/question/' + questionID + '/papers/', {},
         function( data ) {
-            const table = arrayToTable(data.data, {}, ["ssPaperID"]);
+            const table = arrayToTable(data.data, {"Title" : titleAndLink}, ["ssPaperID", "title", "url"]);
             paperTable.empty();
             paperTable.append(table);
         },

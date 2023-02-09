@@ -16,7 +16,7 @@ class Paper(models.Model):
     references = models.TextField()
     citations = models.TextField()
     year = models.IntegerField()
-    url = models.URLField(blank=True)
+    url = models.URLField()
 
     def __str__(self):
         return f"{self.faln} ({self.year}) {self.title[:20]}..."
