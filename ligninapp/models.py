@@ -1,12 +1,25 @@
 from django.db import models
 from django.conf import settings
-
+from django.utils.translation import gettext_lazy as gtl
 
 class LigninUser(models.Model):
     owner = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
 
     def __str__(self):
         return self.owner.username
+
+
+class PermissionEnum(models.TextChoices):
+    VIEW = 'VIEW', gtl('View') # see stuff
+    PROPOSE = 'PROP', gtl('Propose') # suggest stuff
+    MODERATE = 'MOD', gtl('Moderate') # approve, edit directly
+    ADMIN = 'ADMIN', gtl('Administrate') # edit permissions, etc. (don't think too hard yet)
+
+
+class QuestionPermission(models.Model):
+    user = models.ForeignKey(LigninUser, on_delete=models.CASCADE)
+    question = models.ForeignKey("Question", on_delete=models.CASCADE)
+    permission = models.CharField(choices=PermissionEnum.choices, max_length=5)
 
 
 class Paper(models.Model):
@@ -22,6 +35,11 @@ class Paper(models.Model):
         return f"{self.faln} ({self.year}) {self.title[:20]}..."
 
 
+class Subpaper(models.Model):
+    paper = models.ForeignKey(Paper, on_delete=models.CASCADE)
+    description = models.TextField()
+
+
 class Column(models.Model):
     name = models.CharField(max_length=200)
     creator = models.ForeignKey(LigninUser, on_delete=models.CASCADE)
@@ -35,8 +53,9 @@ class Question(models.Model):
     columns = models.ManyToManyField(Column, blank=True)
     # TODO: figure out perms so this doesn't cascade.
     creator = models.ForeignKey(LigninUser, on_delete=models.CASCADE)
-    papers = models.ManyToManyField(Paper, blank=True)
+    papers = models.ManyToManyField(Subpaper, blank=True)
     rejected_papers = models.TextField(blank=True)
+    default_permission = models.CharField(choices=PermissionEnum.choices, max_length=5)
 
     def __str__(self):
         return f'"{self.question_text}" by {self.creator}'

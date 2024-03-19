@@ -9,7 +9,7 @@ import requests
 
 
 def index(request):
-    return HttpResponse("Hello, world. You're at the index.")
+    return HttpResponse("Hello, world. You're at the index. View questions, or <a href='accounts/register/'>create an account</a>.")
 
 
 def get_question(request, question_id):

@@ -42,7 +42,8 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'ligninapp'
+    'ligninapp',
+    'django_registration'
 ]
 
 MIDDLEWARE = [
@@ -104,6 +105,10 @@ AUTH_PASSWORD_VALIDATORS = [
         'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
     },
 ]
+
+# REGISTRATION options:
+ACCOUNT_ACTIVATION_DAYS = 7 # One-week activation window
+
 
 
 # Internationalization
