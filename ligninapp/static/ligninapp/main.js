@@ -111,11 +111,30 @@ function reloadPapers() {
         '/question/' + questionID + '/papers/', {},
         function( data ) {
 
+            //const table = arrayToTable(data.data, {"Title" : titleAndLink}, ["ssPaperID", "title", "url"], data.column_nums);
 
+            data.data[0].id = 1;
+            console.log(data.data);
 
-            const table = arrayToTable(data.data, {"Title" : titleAndLink}, ["ssPaperID", "title", "url"], data.column_nums);
-            const tableTds = table.find('td');
+            // cnstrut this metadata.
+
+            var table = new Tabulator("#paper-table", {
+                height:205, // set height of table (in CSS or here), this enables the Virtual DOM and improves render speed dramatically (can be any valid css height value)
+                data:data.data, //assign data to table
+                layout:"fitColumns", //fit columns to width of table (optional)
+                columns:[ //Define Table Columns
+                    {title:"title", field:"title", width:400},
+                ],
+            });
+
+            // show the data
+
+            /*table.on("cellEdited", function(cell){
+                alert(cell);
+            });*/
+
             /*
+            const tableTds = table.find('td');
             //tableTds.attr("contenteditable", "true");
             tableTds.on('focus', function() {
                 const $this = $(this);
@@ -149,10 +168,10 @@ function reloadPapers() {
                     }
                 });
             });
-             */
 
             paperTable.empty();
             paperTable.append(table);
+             */
         },
         'json'
     );
