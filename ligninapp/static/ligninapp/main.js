@@ -82,7 +82,8 @@ $("#find").submit(function() {
             dataType: 'json',
             headers: {
                 "accept": "application/json",
-                "Access-Control-Allow-Origin":"*"
+                //"Access-Control-Allow-Origin":"*",
+                "x-api-key":"PDPwFWmKA72Rlsuqd2xmF3YVZhB75BUd3ylD4a61"
             }
         });
 
@@ -109,9 +110,13 @@ function reloadPapers() {
     $.get(
         '/question/' + questionID + '/papers/', {},
         function( data ) {
+
+
+
             const table = arrayToTable(data.data, {"Title" : titleAndLink}, ["ssPaperID", "title", "url"], data.column_nums);
             const tableTds = table.find('td');
-            tableTds.attr("contenteditable", "true");
+            /*
+            //tableTds.attr("contenteditable", "true");
             tableTds.on('focus', function() {
                 const $this = $(this);
                 $this.data('before', $this.html());
@@ -144,6 +149,8 @@ function reloadPapers() {
                     }
                 });
             });
+             */
+
             paperTable.empty();
             paperTable.append(table);
         },

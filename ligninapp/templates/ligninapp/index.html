@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+</head>
+<body>
+
+<h1>Lignin</h1>
+
+<h2>Available reviews:</h2>
+
+{% for q in visible_questions %}
+    <p><a href="{% url 'question' q.id %}">{{ q.question_text }} ({{ q.papers.count }} papers, {{ q.columns.count }} columns)</a></p>
+{% empty %}
+    No Visible Reviews
+{% endfor %}
+
+<p>Or, make <a href="admin/ligninapp/question/add/">a new review</a>.
+    {% if not user.is_authenticated %}
+    To do so, you must <a href="accounts/register/">register</a> or <a href="accounts/login/">log in</a> first.
+    {% endif %}
+</p>
+
+</body>
+</html>

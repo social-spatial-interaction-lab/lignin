@@ -3,14 +3,23 @@ import json
 from django.shortcuts import render, get_object_or_404
 from django.http import HttpResponse, JsonResponse
 from django.core import serializers
-from .models import Paper, Question, Value, Column, LigninUser
+from .models import Paper, Question, Value, Column, LigninUser, Subpaper
 from collections import defaultdict
 import requests
+from rules import has_perm
+
+import environ
+env = environ.Env()
+environ.Env.read_env()
 
 
 def index(request):
-    return HttpResponse("Hello, world. You're at the index. View questions, or <a href='accounts/register/'>create an account</a>.")
+    pks = [i.pk for i in Question.objects.all() if has_perm('ligninapp.view_question', request.user, i)]
+    visible_questions = Question.objects.filter(id__in=pks)
 
+    return render(request, template_name="ligninapp/index.html", context={
+        "visible_questions": visible_questions
+    })
 
 def get_question(request, question_id):
     question = get_object_or_404(Question, id=question_id)
@@ -44,39 +53,51 @@ def add_paper(request, question_id, paper_id):
         new_paper.save()
         paper_match = new_paper
 
-    Question.objects.get(id=question_id).papers.add(paper_match)
+    subpaper = paper_match.default_subpaper
+    if subpaper is None:
+        subpaper = Subpaper.objects.create(paper=paper_match, description="")
+        subpaper.save()
+        paper_match.default_subpaper = subpaper
+        paper_match.save()
+
+    Question.objects.get(id=question_id).papers.add(subpaper)
 
     return HttpResponse(status=201)
 
 
-def get_extra_paper_data(question, serialized):
-    # get columns
+def get_papers(request, question_id):
+    question = get_object_or_404(Question, id=question_id)
+
+    # get columns for that question.
     columns = question.columns.all()
 
     # loop through the serialized files and pull relevant info
     result = []
-    for x in json.loads(serialized):
-        paper = Paper.objects.get(pk=x["pk"])
-        paper_info = x["fields"]
+    for subpaper in question.papers.all(): # these are objects, one by one.
+        paper = subpaper.paper
+        # extract the basics (year, faln, etc)
+        paper_json = json.loads(serializers.serialize(
+            'json',
+            Paper.objects.filter(pk=subpaper.paper.pk),
+            fields=['ssPaperID', 'title', 'year', 'faln', 'url']))
+
+        paper_info = paper_json[0]["fields"]  # there's guaranteed to be one.
+        paper_info["description"] = subpaper.description
         for column in columns:
-            descriptions = Value.objects.filter(column=column, paper=paper)
+            descriptions = Value.objects.filter(column=column, paper=subpaper)
             paper_info[column.name] = descriptions[0].value if descriptions else ""
+
         result.append(paper_info)
+        #
 
     column_mds = {}
     for column in columns:
         column_mds[column.name] = column.pk
 
-    return {
+    return JsonResponse({
         "data": result,
         "column_nums": column_mds
-    }
-
-
-def get_papers(request, question_id):
-    question = get_object_or_404(Question, id=question_id)
-    serialized = serializers.serialize('json', question.papers.all(), fields=('ssPaperID', 'title', 'year', 'faln', 'url'))
-    return JsonResponse(get_extra_paper_data(question, serialized))
+    })
 
 
 def edit_annotation(request, paper_id, column_pk):
