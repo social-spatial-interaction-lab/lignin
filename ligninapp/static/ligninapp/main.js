@@ -67,16 +67,23 @@ function titleAndLink(entry) {
 $("#find").submit(function() {
     const queryVal = $("#find-query").val();
 
-    $.getJSON(
-        "https://api.semanticscholar.org/graph/v1/paper/search?query=" + encodeURI(queryVal) + "&fields=title,year,authors,url",
-        {},
-        function(data) {
-            const table = arrayToTable(data.data, {
-                "Title" : titleAndLink,
-                "add?" : entry => $("<td>").append($("<button>").text("add").attr("data-lignin-paperId", entry["paperId"]).click(addPaper))
-            }, ["paperId", "url"], {});
-            findResults.empty();
-            findResults.append(table);
+    $.get(
+        {
+            url: "https://api.semanticscholar.org/graph/v1/paper/search?query=" + encodeURI(queryVal) + "&fields=title,year,authors,url",
+            data: {},
+            success: function(data) {
+                const table = arrayToTable(data.data, {
+                    "Title" : titleAndLink,
+                    "add?" : entry => $("<td>").append($("<button>").text("add").attr("data-lignin-paperId", entry["paperId"]).click(addPaper))
+                }, ["paperId", "url"], {});
+                findResults.empty();
+                findResults.append(table);
+            },
+            dataType: 'json',
+            headers: {
+                "accept": "application/json",
+                "Access-Control-Allow-Origin":"*"
+            }
         });
 
     return false;
@@ -90,7 +97,7 @@ $("#snowball").submit(function() {
                 "Title" : titleAndLink,
                 "add?" : entry => $("<td>").append($("<button>").text("add").attr("data-lignin-paperId", entry["paperId"]).click(addPaper)),
                 "reject?" : entry => $("<td>").append($("<button>").text("reject").attr("data-lignin-paperId", entry["paperId"]).click(rejectPaper))
-            }, ['paperId', 'url', 'title'], {});
+            }, ['paperId', 'url', 'title', 'occurrence_number'], {});
             snowballResults.empty();
             snowballResults.append(table);
         }

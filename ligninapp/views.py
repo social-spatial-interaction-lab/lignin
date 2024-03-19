@@ -3,7 +3,7 @@ import json
 from django.shortcuts import render, get_object_or_404
 from django.http import HttpResponse, JsonResponse
 from django.core import serializers
-from .models import Paper, Question, Value
+from .models import Paper, Question, Value, Column, LigninUser
 from collections import defaultdict
 import requests
 
@@ -83,10 +83,14 @@ def edit_annotation(request, paper_id, column_pk):
     # if it already exists, edit it.
     value_text = request.POST["value_text"]
     note_text = request.POST["note_text"]
-    print(paper_id)
-    print(column_pk)
-    print(value_text)
-    print(note_text)
+    paper = get_object_or_404(Paper, ssPaperID=paper_id)
+    column = get_object_or_404(Column, pk=column_pk)
+    lignin_user = get_object_or_404(LigninUser, owner=request.user)
+
+    value, was_created = Value.objects.get_or_create(paper=paper, column=column, creator=lignin_user)
+    value.value = value_text
+    # value.notes = note_text
+    value.save()
     return HttpResponse(200)
 
 
@@ -121,8 +125,8 @@ def get_snowball(request, question_id):
 
     most_refs = sorted(d.items(), key=lambda item: item[1], reverse=True)
     most_refs_filtered = [x for x in most_refs if x[0] not in ignored_paper_ids]
-    print(most_refs)
-    print(most_refs_filtered)
+    #print(most_refs)
+    #print(most_refs_filtered)
 
     r = requests.post(
         "https://api.semanticscholar.org/graph/v1/paper/batch?fields=title,year,authors,url",
