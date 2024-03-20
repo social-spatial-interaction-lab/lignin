@@ -152,6 +152,7 @@ def get_papers(request, question_id):
         column_md["field"] = column.name
         column_md["editor"] = True
         column_md["column_id"] = column.id
+        column_md["formatter"] = "textarea"
         column_mds.append(column_md)
 
     # add IDs
