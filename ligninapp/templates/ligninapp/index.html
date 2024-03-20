@@ -11,7 +11,6 @@
 Literature reviews are great - but they rust. Why do reviews need to be static, if the point of reviews is to be up-to-date?
 
 <h2>Available reviews:</h2>
-
 {% for q in visible_questions %}
     <p><a href="{% url 'question' q.id %}">{{ q.question_text }} ({{ q.papers.count }} papers, {{ q.columns.count }} columns)</a></p>
 {% empty %}
@@ -20,7 +19,7 @@ Literature reviews are great - but they rust. Why do reviews need to be static, 
 
 <p>Or, make <a href="admin/ligninapp/question/add/">a new review</a>.
     {% if not user.is_authenticated %}
-    To do so, you must <a href="accounts/register/">register</a> or <a href="accounts/login/">log in</a> first.
+    To do so, you must <a href="accounts/register/">register</a> or <a href="admin/login/?next=/">log in</a> first.
     {% endif %}
 </p>
 
