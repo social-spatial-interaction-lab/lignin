@@ -76,8 +76,8 @@ class Column(RulesModel):
         return reverse('', args=[str(self.id)])
 
 
-rules.add_perm('ligninapp.add_column', rules.is_authenticated)
-rules.add_perm('ligninapp.view_column', rules.is_authenticated)
+rules.add_perm('ligninapp.add_column', rules.always_allow)
+rules.add_perm('ligninapp.view_column', rules.always_allow)
 #rules.add_perm('ligninapp.change_column', view_review
 
 
@@ -86,7 +86,7 @@ class Review(RulesModel):
     columns = models.ManyToManyField(Column, blank=True)
     entries = models.ManyToManyField(Entry, blank=True)
     rejected_papers = models.TextField(blank=True)
-    default_permission = models.CharField(choices=PermissionEnum.choices, max_length=5)
+    default_permission = models.CharField(choices=PermissionEnum.choices, max_length=5, help_text="This currently does not matter")
 
     def __str__(self):
         return f'{self.question_text}'
@@ -96,9 +96,9 @@ class Review(RulesModel):
 
 
 rules.add_perm('ligninapp', rules.always_allow)
-rules.add_perm('ligninapp.add_review', rules.is_authenticated)
-rules.add_perm('ligninapp.view_review', view_review)
-rules.add_perm('ligninapp.change_review', view_review)
+rules.add_perm('ligninapp.add_review', rules.always_allow)
+rules.add_perm('ligninapp.view_review', rules.always_allow)
+rules.add_perm('ligninapp.change_review', rules.always_allow)
 
 
 class Value(RulesModel):
