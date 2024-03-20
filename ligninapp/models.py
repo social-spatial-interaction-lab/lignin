@@ -76,8 +76,8 @@ class Column(RulesModel):
         return reverse('', args=[str(self.id)])
 
 
-rules.add_perm('ligninapp.add_column', rules.always_allow)
-rules.add_perm('ligninapp.view_column', rules.always_allow)
+rules.add_perm('ligninapp.add_column', rules.is_authenticated)
+rules.add_perm('ligninapp.view_column', rules.is_authenticated)
 #rules.add_perm('ligninapp.change_column', view_review
 
 
@@ -96,9 +96,9 @@ class Review(RulesModel):
 
 
 rules.add_perm('ligninapp', rules.always_allow)
-rules.add_perm('ligninapp.add_review', rules.always_allow)
-rules.add_perm('ligninapp.view_review', rules.always_allow)
-rules.add_perm('ligninapp.change_review', rules.always_allow)
+rules.add_perm('ligninapp.add_review', rules.is_authenticated)
+rules.add_perm('ligninapp.view_review', view_review)
+rules.add_perm('ligninapp.change_review', view_review)
 
 
 class Value(RulesModel):
