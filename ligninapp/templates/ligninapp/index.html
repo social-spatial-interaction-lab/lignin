@@ -8,6 +8,8 @@
 
 <h1>Lignin</h1>
 
+Literature reviews are great - but they rust. Why do reviews need to be static, if the point of reviews is to be up-to-date?
+
 <h2>Available reviews:</h2>
 
 {% for q in visible_questions %}
@@ -20,6 +22,11 @@
     {% if not user.is_authenticated %}
     To do so, you must <a href="accounts/register/">register</a> or <a href="accounts/login/">log in</a> first.
     {% endif %}
+</p>
+
+<p>
+    Emboldened by Charlotte Croucher's PhD thesis "LoCoMoTe Dashboard",
+I hacked together a couple more features on an earlier prototype of this lit review tool.
 </p>
 
 </body>

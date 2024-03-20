@@ -3,7 +3,7 @@ import json
 from django.shortcuts import render, get_object_or_404
 from django.http import HttpResponse, JsonResponse
 from django.core import serializers
-from .models import Paper, Question, Value, Column, LigninUser, Subpaper
+from .models import Paper, Review, Value, Column, LigninUser, Entry
 from collections import defaultdict
 import requests
 from rules import has_perm
@@ -14,15 +14,15 @@ environ.Env.read_env()
 
 
 def index(request):
-    pks = [i.pk for i in Question.objects.all() if has_perm('ligninapp.view_question', request.user, i)]
-    visible_questions = Question.objects.filter(id__in=pks)
+    pks = [i.pk for i in Review.objects.all() if has_perm('ligninapp.view_question', request.user, i)]
+    visible_questions = Review.objects.filter(id__in=pks)
 
     return render(request, template_name="ligninapp/index.html", context={
         "visible_questions": visible_questions
     })
 
 def get_question(request, question_id):
-    question = get_object_or_404(Question, id=question_id)
+    question = get_object_or_404(Review, id=question_id)
     return render(request, template_name="ligninapp/question.html", context={
         "question": question,
         "question_id": question_id
@@ -38,8 +38,11 @@ def add_paper(request, question_id, paper_id):
         # make API call to Semantic Scholar.
         paper_details = requests.get(
             f"https://api.semanticscholar.org/graph/v1/paper/{paper_id}"
-            f"?fields=title,year,authors,citations.paperId,references.paperId"
+            f"?fields=title,year,authors,citations.paperId,references.paperId",
+            headers={"x-api-key": "PDPwFWmKA72Rlsuqd2xmF3YVZhB75BUd3ylD4a61"}
         ).json()
+
+        print(paper_details)
 
         new_paper = Paper.objects.create(
             ssPaperID=paper_details['paperId'],
@@ -55,34 +58,37 @@ def add_paper(request, question_id, paper_id):
 
     subpaper = paper_match.default_subpaper
     if subpaper is None:
-        subpaper = Subpaper.objects.create(paper=paper_match, description="")
+        subpaper = Entry.objects.create(paper=paper_match, description="")
         subpaper.save()
         paper_match.default_subpaper = subpaper
         paper_match.save()
 
-    Question.objects.get(id=question_id).papers.add(subpaper)
+    Review.objects.get(id=question_id).entries.add(subpaper)
 
     return HttpResponse(status=201)
 
 
 def get_papers(request, question_id):
-    question = get_object_or_404(Question, id=question_id)
+    question = get_object_or_404(Review, id=question_id)
 
     # get columns for that question.
     columns = question.columns.all()
+    paper_fields = ['year', 'faln'] # 'ssPaperID',
 
     # loop through the serialized files and pull relevant info
     result = []
-    for subpaper in question.papers.all(): # these are objects, one by one.
+    for subpaper in question.entries.all(): # these are objects, one by one.
         paper = subpaper.paper
         # extract the basics (year, faln, etc)
         paper_json = json.loads(serializers.serialize(
             'json',
-            Paper.objects.filter(pk=subpaper.paper.pk),
-            fields=['ssPaperID', 'title', 'year', 'faln', 'url']))
+            Paper.objects.filter(pk=paper.pk),
+            fields=paper_fields))
 
-        paper_info = paper_json[0]["fields"]  # there's guaranteed to be one.
+        paper_info = paper_json[0]["fields"]  # there's guaranteed to be one and only one.
+        paper_info["title"] = f"<a target=\"_blank\" href=\"{paper.url}\">{paper.title}</a>"
         paper_info["description"] = subpaper.description
+        paper_info["id"] = subpaper.id
         for column in columns:
             descriptions = Value.objects.filter(column=column, paper=subpaper)
             paper_info[column.name] = descriptions[0].value if descriptions else ""
@@ -90,13 +96,35 @@ def get_papers(request, question_id):
         result.append(paper_info)
         #
 
-    column_mds = {}
-    for column in columns:
-        column_mds[column.name] = column.pk
+    column_mds = [{"title":"Title", "field":"title", "formatter":"html"}]
 
+    for title in paper_fields: #["description", "id"]:
+        column_md = {}
+        column_md["title"] = title
+        column_md["field"] = title
+        column_mds.append(column_md)
+
+    for column in columns:
+        column_md = {}
+        column_md["title"] = column.name
+        column_md["field"] = column.name
+        column_md["editor"] = True
+        column_md["column_id"] = column.id
+        column_mds.append(column_md)
+
+    # add IDs
+
+    # rectangle:
+    # {id: f..
+    #  	{id:4, name:"Brendon Philips", age:"125", col:"orange", dob:"01/08/1980"},
+    #  	{id:5, name:"Margret Marmaduke", age:"16", col:"yellow", dob:"31/01/1999"},
+    # "column_metadata: [
+    # 	 	{title:"Favourite Color", field:"col"},
+    # 	 	{title:"Date Of Birth", field:"dob", sorter:"date", hozAlign:"center"},
+    # 	 	]
     return JsonResponse({
         "data": result,
-        "column_nums": column_mds
+        "metadata": column_mds
     })
 
 
@@ -104,7 +132,7 @@ def edit_annotation(request, paper_id, column_pk):
     # if it already exists, edit it.
     value_text = request.POST["value_text"]
     note_text = request.POST["note_text"]
-    paper = get_object_or_404(Paper, ssPaperID=paper_id)
+    paper = get_object_or_404(Entry, id=paper_id)
     column = get_object_or_404(Column, pk=column_pk)
     lignin_user = get_object_or_404(LigninUser, owner=request.user)
 
@@ -116,7 +144,7 @@ def edit_annotation(request, paper_id, column_pk):
 
 
 def reject_paper(request, question_id, paper_id):
-    question = get_object_or_404(Question, id=question_id)
+    question = get_object_or_404(Review, id=question_id)
 
     # if it's already there, ignore the request.
     if paper_id in question.rejected_papers:
@@ -132,8 +160,18 @@ def reject_paper(request, question_id, paper_id):
 
 
 def get_snowball(request, question_id):
-    question = get_object_or_404(Question, id=question_id)
-    included_papers = question.papers.all()
+    question = get_object_or_404(Review, id=question_id)
+    #included_papers = question.papers.all()
+
+
+    # foo_queryset = Foo.objects.filter(attr=value)
+    # referenced_bars = foo_queryset.bar_set.all()
+    included_papers = Paper.objects.filter(subpaper__in=question.entries.all())
+
+    print(included_papers)
+    print("aef")
+    print("aef")
+
     rejected_paper_ids = question.rejected_papers.split(" ") if question.rejected_papers else []
     ignored_paper_ids = [x.ssPaperID for x in included_papers] + rejected_paper_ids
     id_strings = [x.references.split(" ") + x.citations.split(" ") for x in included_papers]

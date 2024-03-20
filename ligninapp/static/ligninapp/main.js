@@ -111,27 +111,38 @@ function reloadPapers() {
         '/question/' + questionID + '/papers/', {},
         function( data ) {
 
-            //const table = arrayToTable(data.data, {"Title" : titleAndLink}, ["ssPaperID", "title", "url"], data.column_nums);
-
-            data.data[0].id = 1;
-            console.log(data.data);
-
-            // cnstrut this metadata.
-
             var table = new Tabulator("#paper-table", {
                 height:205, // set height of table (in CSS or here), this enables the Virtual DOM and improves render speed dramatically (can be any valid css height value)
                 data:data.data, //assign data to table
                 layout:"fitColumns", //fit columns to width of table (optional)
-                columns:[ //Define Table Columns
-                    {title:"title", field:"title", width:400},
-                ],
+                columns: data.metadata,
+                editTriggerEvent:"dblclick"
             });
 
             // show the data
+            table.on("cellEdited", function(cell){
+                //console.log(cell.getRow().getData());
+                //console.log(cell.getColumn().getDefinition());
+                const paperId = cell.getRow().getData()["id"];
+                const columnId = cell.getColumn().getDefinition()["column_id"];
+                $.ajax({
+                    url: '/values/' + paperId + '/' + columnId + '/',
+                    headers: {
+                        'X-CSRFToken': csrftoken
+                    },
+                    data: {
+                        "value_text": cell.getValue(),
+                        "note_text": ""
+                    },
+                    type: 'POST',
+                    success: function(result) {
+                        // do some niuce UI thing here.
+                    }
+                });
 
-            /*table.on("cellEdited", function(cell){
-                alert(cell);
-            });*/
+                // make a call.
+
+            });
 
             /*
             const tableTds = table.find('td');

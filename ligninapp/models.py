@@ -6,15 +6,15 @@ from rules.contrib.models import RulesModel
 
 
 @rules.predicate
-def view_question(user, question):
-    if question is None:
+def view_review(user, review):
+    if review is None:
         return True
     try:
-        q_perm = QuestionPermission.objects.get(user=user.lignin_user, question=question)
+        q_perm = ReviewPermission.objects.get(user=user.lignin_user, review=review)
         return q_perm.permission in ['VIEW', 'PROP', 'MOD', 'ADMIN']
         # otherwise, go to the default.
-    except QuestionPermission.DoesNotExist:
-        return question.default_permission in ['VIEW', 'PROP', 'MOD', 'ADMIN']
+    except ReviewPermission.DoesNotExist:
+        return review.default_permission in ['VIEW', 'PROP', 'MOD', 'ADMIN']
 
 
 class LigninUser(models.Model):
@@ -32,9 +32,9 @@ class PermissionEnum(models.TextChoices):
     ADMIN = 'ADMIN', gtl('Administrate') # edit permissions, etc. (don't think too hard yet)
 
 
-class QuestionPermission(models.Model):
+class ReviewPermission(models.Model):
     user = models.ForeignKey(LigninUser, on_delete=models.CASCADE)
-    question = models.ForeignKey("Question", on_delete=models.CASCADE)
+    review = models.ForeignKey("Review", on_delete=models.CASCADE)
     permission = models.CharField(choices=PermissionEnum.choices, max_length=5)
 
 class Paper(RulesModel):
@@ -45,13 +45,13 @@ class Paper(RulesModel):
     citations = models.TextField()
     year = models.IntegerField()
     url = models.URLField()
-    default_subpaper = models.ForeignKey("Subpaper", null=True, on_delete=models.SET_NULL, related_name="default_of")
+    default_subpaper = models.ForeignKey("Entry", null=True, on_delete=models.SET_NULL, related_name="default_of")
 
     def __str__(self):
         return f"{self.faln} ({self.year}) {self.title[:20]}..."
 
 
-class Subpaper(RulesModel):
+class Entry(RulesModel):
     paper = models.ForeignKey(Paper, on_delete=models.CASCADE)
     description = models.TextField(blank=True)
 
@@ -70,10 +70,10 @@ class Column(RulesModel):
         return self.name
 
 
-class Question(RulesModel):
+class Review(RulesModel):
     question_text = models.CharField(max_length=200)
     columns = models.ManyToManyField(Column, blank=True)
-    papers = models.ManyToManyField(Subpaper, blank=True)
+    entries = models.ManyToManyField(Entry, blank=True)
     rejected_papers = models.TextField(blank=True)
     default_permission = models.CharField(choices=PermissionEnum.choices, max_length=5)
 
@@ -82,17 +82,17 @@ class Question(RulesModel):
 
 
 rules.add_perm('ligninapp', rules.always_allow)
-rules.add_perm('ligninapp.add_question', rules.is_authenticated)
-rules.add_perm('ligninapp.view_question', view_question)
-rules.add_perm('ligninapp.change_question', view_question)
+rules.add_perm('ligninapp.add_review', rules.is_authenticated)
+rules.add_perm('ligninapp.view_review', view_review)
+rules.add_perm('ligninapp.change_review', view_review)
 
 
 class Value(RulesModel):
     column = models.ForeignKey(Column, on_delete=models.CASCADE)
-    paper = models.ForeignKey(Subpaper, on_delete=models.CASCADE)
+    entry = models.ForeignKey(Entry, on_delete=models.CASCADE)
     creator = models.ForeignKey(LigninUser, null=True, on_delete=models.SET_NULL)
     value = models.CharField(max_length=1000)
     notes = models.TextField(blank=True)
 
     def __str__(self):
-        return f"{self.column} for {self.paper}: {self.value}"
+        return f"{self.column} for {self.entry}: {self.value}"
