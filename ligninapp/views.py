@@ -4,7 +4,6 @@ from django import forms
 from django.shortcuts import render, get_object_or_404
 from django.http import HttpResponse, JsonResponse, HttpResponseRedirect
 from django.core import serializers
-from django.urls import reverse
 from rules.contrib.views import PermissionRequiredMixin
 
 from .models import Paper, Review, Value, Column, LigninUser, Entry

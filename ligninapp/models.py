@@ -10,6 +10,8 @@ from rules.contrib.models import RulesModel
 def view_review(user, review):
     if review is None:
         return True
+    if not user.is_authenticated:
+        return review.default_permission in ['VIEW', 'PROP', 'MOD', 'ADMIN']
     try:
         q_perm = ReviewPermission.objects.get(user=user.lignin_user, review=review)
         return q_perm.permission in ['VIEW', 'PROP', 'MOD', 'ADMIN']
