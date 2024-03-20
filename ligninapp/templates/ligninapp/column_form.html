@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+</head>
+<body>
+<form action="{% url 'column-create' %}" method="post">
+    {% csrf_token %}
+    <h3>Create a New Column</h3>
+    {{ form }}
+    <input type="submit" value="Submit">
+</form>
+</body>
+</html>

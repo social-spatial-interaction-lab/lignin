@@ -9,14 +9,25 @@
 </head>
 <body>
 
+<p><a href="/">(Back to the Homepage)</a></p>
 
 <h2>{{ question }}</h2>
+
+This page has three sections:
+
+<ul>
+    <li><b>Current Papers</b> is a list of papers currently in the review, as part of a grid.</li>
+    <li><b>Search</b> lets you add papers by name or keyword.</li>
+    <li><b>Snowball</b> lets you search papers using the papers you've already included in the dataset.
+        The search method is finding papers that have a lot of citations or references to the papers
+        in the dataset already, using the Semantic Scholar API.</li>
+</ul>
 
 <div>
     <h3>Current Papers</h3>
     <p>
-        <a href="admin/ligninapp/question/{{ question_id }}/change/">Add Existing Column</a>
-        | <a href="admin/ligninapp/column/add/">Create New Column</a>
+        <!--a href="admin/ligninapp/question/{{ question_id }}/change/">Add Existing Column</a-->
+        <a href="/column/add/?review={{ question_id }}">Create New Column</a>
         | Add rows by the "search" tool <a href="#h3-search">below.</a>
     </p>
     <div id="paper-table"></div>

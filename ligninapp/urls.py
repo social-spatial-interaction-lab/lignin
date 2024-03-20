@@ -9,5 +9,7 @@ urlpatterns = [
     path('question/<int:question_id>/papers/add/<paper_id>/', views.add_paper),
     path('question/<int:question_id>/papers/reject/<paper_id>/', views.reject_paper),
     path('question/<int:question_id>/snowball/', views.get_snowball),
-    path('values/<paper_id>/<int:column_pk>/', views.edit_annotation)
+    path('values/<entry_id>/<int:column_pk>/', views.edit_annotation),
+    path('question/add/', views.ReviewCreate.as_view(), name='review-create'),
+    path('column/add/', views.create_column, name='column-create')
 ]

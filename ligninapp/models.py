@@ -1,6 +1,7 @@
 import rules
 from django.db import models
 from django.conf import settings
+from django.urls import reverse
 from django.utils.translation import gettext_lazy as gtl
 from rules.contrib.models import RulesModel
 
@@ -64,14 +65,22 @@ class Entry(RulesModel):
 
 class Column(RulesModel):
     name = models.CharField(max_length=200)
-    default_permission = models.CharField(choices=PermissionEnum.choices, max_length=5)
+    default_permission = models.CharField(choices=PermissionEnum.choices, max_length=5, default="MOD")
 
     def __str__(self):
         return self.name
 
+    def get_absolute_url(self):  # new
+        return reverse('', args=[str(self.id)])
+
+
+rules.add_perm('ligninapp.add_column', rules.is_authenticated)
+rules.add_perm('ligninapp.view_column', rules.is_authenticated)
+#rules.add_perm('ligninapp.change_column', view_review
+
 
 class Review(RulesModel):
-    question_text = models.CharField(max_length=200)
+    question_text = models.CharField(max_length=200, help_text="The title of the review")
     columns = models.ManyToManyField(Column, blank=True)
     entries = models.ManyToManyField(Entry, blank=True)
     rejected_papers = models.TextField(blank=True)
@@ -79,6 +88,9 @@ class Review(RulesModel):
 
     def __str__(self):
         return f'{self.question_text}'
+
+    def get_absolute_url(self):  # new
+        return reverse('question', args=[str(self.id)])
 
 
 rules.add_perm('ligninapp', rules.always_allow)

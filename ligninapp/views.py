@@ -1,12 +1,17 @@
 import json
 
+from django import forms
 from django.shortcuts import render, get_object_or_404
-from django.http import HttpResponse, JsonResponse
+from django.http import HttpResponse, JsonResponse, HttpResponseRedirect
 from django.core import serializers
+from django.urls import reverse
+from rules.contrib.views import PermissionRequiredMixin
+
 from .models import Paper, Review, Value, Column, LigninUser, Entry
 from collections import defaultdict
 import requests
 from rules import has_perm
+from django.views.generic.edit import CreateView, UpdateView, DeleteView
 
 import environ
 env = environ.Env()
@@ -14,7 +19,7 @@ environ.Env.read_env()
 
 
 def index(request):
-    pks = [i.pk for i in Review.objects.all() if has_perm('ligninapp.view_question', request.user, i)]
+    pks = [i.pk for i in Review.objects.all() if has_perm('ligninapp.view_review', request.user, i)]
     visible_questions = Review.objects.filter(id__in=pks)
 
     return render(request, template_name="ligninapp/index.html", context={
@@ -27,6 +32,44 @@ def get_question(request, question_id):
         "question": question,
         "question_id": question_id
     })
+
+
+class ReviewCreate(PermissionRequiredMixin, CreateView):
+    model = Review
+    fields = ['question_text', 'default_permission']
+    permission_required = 'ligninapp.add_review'
+
+
+class NewColumnForm(forms.Form):
+    name = forms.CharField(max_length=200)
+    review_to_add_to = forms.IntegerField(widget = forms.HiddenInput(), required = False)
+
+
+def create_column(request):
+    # if this is a POST request we need to process the form data
+    if request.method == "POST":
+        # create a form instance and populate it with data from the request:
+        form = NewColumnForm(request.POST)
+        # check whether it's valid:
+        if form.is_valid():
+            # process the data in form.cleaned_data as required
+
+            # Create the new column
+            col = Column.objects.create(name=form.cleaned_data['name'])
+            col.save()
+            # add the column to the review
+            review = Review.objects.get(pk=form.cleaned_data['review_to_add_to'])
+            review.columns.add(col)
+            review.save()
+
+            # redirect to the review
+            return HttpResponseRedirect(review.get_absolute_url())
+
+    # if a GET (or any other method) we'll create a blank form
+    else:
+        form = NewColumnForm(initial={"review_to_add_to": int(request.GET['review'])})
+
+    return render(request, "ligninapp/column_form.html", {"form": form})
 
 
 def add_paper(request, question_id, paper_id):
@@ -90,7 +133,7 @@ def get_papers(request, question_id):
         paper_info["description"] = subpaper.description
         paper_info["id"] = subpaper.id
         for column in columns:
-            descriptions = Value.objects.filter(column=column, paper=subpaper)
+            descriptions = Value.objects.filter(column=column, entry=subpaper)
             paper_info[column.name] = descriptions[0].value if descriptions else ""
 
         result.append(paper_info)
@@ -128,15 +171,15 @@ def get_papers(request, question_id):
     })
 
 
-def edit_annotation(request, paper_id, column_pk):
+def edit_annotation(request, entry_id, column_pk):
     # if it already exists, edit it.
     value_text = request.POST["value_text"]
     note_text = request.POST["note_text"]
-    paper = get_object_or_404(Entry, id=paper_id)
+    entry = get_object_or_404(Entry, id=entry_id)
     column = get_object_or_404(Column, pk=column_pk)
     lignin_user = get_object_or_404(LigninUser, owner=request.user)
 
-    value, was_created = Value.objects.get_or_create(paper=paper, column=column, creator=lignin_user)
+    value, was_created = Value.objects.get_or_create(entry=entry, column=column, creator=lignin_user)
     value.value = value_text
     # value.notes = note_text
     value.save()

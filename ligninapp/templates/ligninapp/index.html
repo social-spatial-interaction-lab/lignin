@@ -1,31 +1,55 @@
 <!DOCTYPE html>
+{% load static %}
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <title>Title</title>
+    <link rel="stylesheet" href="{% static 'ligninapp/simple-v1.min.css' %}">
+    <link rel="stylesheet" href="{% static 'ligninapp/style.css' %}">
 </head>
 <body>
 
 <h1>Lignin</h1>
 
-Literature reviews are great - but they rust. Why do reviews need to be static, if the point of reviews is to be up-to-date?
-
 <h2>Available reviews:</h2>
 {% for q in visible_questions %}
-    <p><a href="{% url 'question' q.id %}">{{ q.question_text }} ({{ q.papers.count }} papers, {{ q.columns.count }} columns)</a></p>
+    <p><a href="{% url 'question' q.id %}">{{ q.question_text }} ({{ q.entries.count }} papers, {{ q.columns.count }} columns)</a></p>
 {% empty %}
     No Visible Reviews
 {% endfor %}
 
-<p>Or, make <a href="admin/ligninapp/question/add/">a new review</a>.
+<p>Or, make <a href="question/add/">a new review</a>.
     {% if not user.is_authenticated %}
     To do so, you must <a href="accounts/register/">register</a> or <a href="admin/login/?next=/">log in</a> first.
     {% endif %}
 </p>
 
 <p>
-    Emboldened by Charlotte Croucher's PhD thesis "LoCoMoTe Dashboard",
-I hacked together a couple more features on an earlier prototype of this lit review tool.
+    Emboldened by <a href="https://cscroucher.shinyapps.io/LoCoMoTeDashboard/">Charlotte Croucher's PhD thesis "LoCoMoTe Dashboard",</a>
+    I <a href="markromanmiller.com">(Mark)</a> hacked together a couple more features on an earlier prototype of this lit review tool. I hope you enjoy it!
+</p>
+
+<p>Currently, everthing is public, but features will be added soon. You can contribute - email me if you're interested at mmiller30 at iit dot edu.</p>
+
+<h3>Pitch (Informal)</h3>
+
+<p>
+    Literature reviews are great, but they show the literature at one point in time. It doesn't need to be static anymore,
+    because we have alternative publishing methods now. So, why don't we pool all the informal, ad-hoc spreadsheets
+    we have from our old literature review sections - and plug your own papers on these tables, too!
+</p>
+
+<h3>Pitch (Formal)</h3>
+<p>
+    Research builds upon the already-known to reach the not-yet-known. Delineating between the two often takes the
+    form of an ad-hoc taxonomy of related work created for the specific paper submission, with some
+    criteria drawn based upon previous literature and some criteria drawn using new distinctions
+    that the authors contribute to the literature. Defining this space implied by several works
+    is often the contribution of literature review papers and SoKs. However, these reviews are
+    static, limiting their usefulness in fast-moving areas. I propose that a dynamic, updating
+    literature review that supports the development of ad-hoc taxonomies can help individual researchers
+    find and sort related work quickly as well as provide shared ground for other researchers to
+    assert or correct these same ideas.
 </p>
 
 </body>
