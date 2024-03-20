@@ -112,10 +112,10 @@ function reloadPapers() {
         function( data ) {
 
             var table = new Tabulator("#paper-table", {
-                height:205, // set height of table (in CSS or here), this enables the Virtual DOM and improves render speed dramatically (can be any valid css height value)
                 data:data.data, //assign data to table
                 layout:"fitColumns", //fit columns to width of table (optional)
                 columns: data.metadata,
+                renderHorizontal:"virtual",
                 editTriggerEvent:"dblclick"
             });
 

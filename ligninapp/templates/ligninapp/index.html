@@ -12,11 +12,13 @@
 <h1>Lignin</h1>
 
 <h2>Available reviews:</h2>
+<ul>
 {% for q in visible_questions %}
-    <p><a href="{% url 'question' q.id %}">{{ q.question_text }} ({{ q.entries.count }} papers, {{ q.columns.count }} columns)</a></p>
+    <li><a href="{% url 'question' q.id %}">{{ q.question_text }} ({{ q.entries.count }} papers, {{ q.columns.count }} columns)</a></li>
 {% empty %}
     No Visible Reviews
 {% endfor %}
+</ul>
 
 <p>Or, make <a href="question/add/">a new review</a>.
     {% if not user.is_authenticated %}
