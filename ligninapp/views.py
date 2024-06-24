@@ -235,8 +235,9 @@ def get_snowball(request, question_id):
     print(response)
 
     for paper in response:
-        paper["occurrence_number"] = d[paper['paperId']]
-        paper["occurrence"] = f"{d[paper['paperId']]}/{snowball_set_size}"
+        if paper:
+            paper["occurrence_number"] = d[paper['paperId']]
+            paper["occurrence"] = f"{d[paper['paperId']]}/{snowball_set_size}"
 
     return JsonResponse({"data": sorted(response, key=lambda x: x["occurrence_number"], reverse=True)})
 
