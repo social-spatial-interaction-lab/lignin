@@ -209,7 +209,7 @@ def get_snowball(request, question_id):
 
     # foo_queryset = Foo.objects.filter(attr=value)
     # referenced_bars = foo_queryset.bar_set.all()
-    included_papers = Paper.objects.filter(subpaper__in=question.entries.all())
+    included_papers = Paper.objects.filter(default_subpaper__in=question.entries.all())
 
     print(included_papers)
     print("aef")
