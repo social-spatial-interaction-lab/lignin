@@ -112,11 +112,15 @@ function reloadPapers() {
         function( data ) {
 
             var table = new Tabulator("#paper-table", {
+                maxHeight:"80vh",
                 data:data.data, //assign data to table
-                layout:"fitColumns", //fit columns to width of table (optional)
+                layout:"fitData", //fit columns to width of table (optional)
                 columns: data.metadata,
                 renderHorizontal:"virtual",
-                editTriggerEvent:"dblclick"
+                editTriggerEvent:"dblclick",
+                persistence: {
+                    columns: true
+                }
             });
 
             // show the data
