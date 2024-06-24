@@ -209,11 +209,7 @@ def get_snowball(request, question_id):
 
     # foo_queryset = Foo.objects.filter(attr=value)
     # referenced_bars = foo_queryset.bar_set.all()
-    included_papers = question.entries.paper.all()
-
-    print(included_papers)
-    print("aef")
-    print("aef")
+    included_papers = Paper.objects.filter(ssPaperID__in=question.entries.values('paper__ssPaperID'))
 
     rejected_paper_ids = question.rejected_papers.split(" ") if question.rejected_papers else []
     ignored_paper_ids = [x.ssPaperID for x in included_papers] + rejected_paper_ids
