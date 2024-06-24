@@ -209,7 +209,7 @@ def get_snowball(request, question_id):
 
     # foo_queryset = Foo.objects.filter(attr=value)
     # referenced_bars = foo_queryset.bar_set.all()
-    included_papers = Paper.objects.filter(default_subpaper__in=question.entries.all())
+    included_papers = question.entries.paper.all()
 
     print(included_papers)
     print("aef")
@@ -236,6 +236,8 @@ def get_snowball(request, question_id):
     )
 
     response = r.json()
+    print(response)
+
     for paper in response:
         paper["occurrence_number"] = d[paper['paperId']]
         paper["occurrence"] = f"{d[paper['paperId']]}/{snowball_set_size}"
