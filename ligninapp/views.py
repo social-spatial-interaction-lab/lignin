@@ -129,7 +129,7 @@ def get_papers(request, question_id):
 
         paper_info = paper_json[0]["fields"]  # there's guaranteed to be one and only one.
         paper_info["title"] = paper.title
-        paper_info["link"] = f"<a target=\"_blank\" href=\"{paper.url}\">@</a>"
+        paper_info["link"] = paper.url
         paper_info["description"] = subpaper.description
         paper_info["id"] = subpaper.id
         for column in columns:
@@ -142,7 +142,8 @@ def get_papers(request, question_id):
     column_mds = [
         {"title": "Title", "field": "title", "formatter": "textarea"},
         {"title": "Link", "field": "link", "formatter": "link", "formatterParams": {
-            "label": "@"
+            "label": "@",
+            "target": "_blank"
         }}
     ]
 
