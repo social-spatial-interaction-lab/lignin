@@ -68,6 +68,7 @@ class Entry(RulesModel):
 class Column(RulesModel):
     name = models.CharField(max_length=200)
     default_permission = models.CharField(choices=PermissionEnum.choices, max_length=5, default="MOD")
+    column_info = models.TextField(blank=True, null=False)
 
     def __str__(self):
         return self.name

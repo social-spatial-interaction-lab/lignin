@@ -119,7 +119,7 @@ function reloadPapers() {
                 renderHorizontal:"virtual",
                 editTriggerEvent:"dblclick",
                 persistence: {
-                    columns: true
+                    columns: ["width"]
                 }
             });
 

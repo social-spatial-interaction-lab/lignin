@@ -159,6 +159,9 @@ def get_papers(request, question_id):
         column_md["editor"] = True
         column_md["column_id"] = column.id
         column_md["formatter"] = "textarea"
+        column_md["headerPopupIcon"] = "&#128712;"
+        if column.column_info:
+            column_md["headerPopup"] = column.column_info
         column_mds.append(column_md)
 
     # add IDs
