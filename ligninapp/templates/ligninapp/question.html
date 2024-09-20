@@ -13,34 +13,31 @@
 
 <h2>{{ question }}</h2>
 
-<p>This page has three sections:</p>
+This page has three sections:
 
 <ul>
-    <li><b>Current Papers</b> is a list of papers currently in review, displayed as part of a grid. Double-click on custom columns to edit.</li>
+    <li><b>Current Papers</b> is a list of papers currently in the review, as part of a grid. Double-click on custom columns to edit.</li>
     <li><b>Search</b> lets you add papers by name or keyword.</li>
-    <li><b>Snowball</b> lets you search papers using the papers you've already included in the dataset. The search method finds papers that have a lot of citations or references to the papers in the dataset already, using the Semantic Scholar API.</li>
+    <li><b>Snowball</b> lets you search papers using the papers you've already included in the dataset.
+        The search method is finding papers that have a lot of citations or references to the papers
+        in the dataset already, using the Semantic Scholar API.</li>
 </ul>
 
 <div>
     <h3>Current Papers</h3>
     <p>
+        <!--a href="admin/ligninapp/question/{{ question_id }}/change/">Add Existing Column</a-->
         <a href="/column/add/?review={{ question_id }}">Create New Column</a>
         | Add rows by the "search" tool <a href="#h3-search">below.</a>
     </p>
-
-    <!-- Fullscreen toggle button -->
-    <button onclick="toggleFullScreen()">Expand Table Screen</button>
-    <div id="paper-table">
-        <div class="tabulator">Loading paper table...</div>
-    </div>
+    <div id="paper-table">Loading paper table...</div>
 </div>
 
 <div>
     <h3 id="h3-search">Search</h3>
     <form id="find">
-        <label for="find-query">Search: </label>
-        <input id="find-query">
-        <input type="submit">
+      <label for="find-query">Search: </label><input id="find-query">
+      <input type="submit">
     </form>
     <div id="find-results"></div>
 </div>
@@ -55,30 +52,7 @@
 
 <script>
     const questionID = {{ question_id }};
-
-    // Full-screen toggle function
-    function toggleFullScreen() {
-        const paperTable = document.getElementById("paper-table");
-        if (!document.fullscreenElement) {
-            paperTable.classList.add("full-screen");
-            if (paperTable.requestFullscreen) {
-                paperTable.requestFullscreen();
-            } else if (paperTable.mozRequestFullScreen) { // Firefox
-                paperTable.mozRequestFullScreen();
-            } else if (paperTable.webkitRequestFullscreen) { // Chrome, Safari, Opera
-                paperTable.webkitRequestFullscreen();
-            } else if (paperTable.msRequestFullscreen) { // IE/Edge
-                paperTable.msRequestFullscreen();
-            }
-        } else {
-            paperTable.classList.remove("full-screen");
-            if (document.exitFullscreen) {
-                document.exitFullscreen();
-            }
-        }
-    }
 </script>
-
 <script src="https://cdn.jsdelivr.net/npm/js-cookie@3.0.1/dist/js.cookie.min.js"></script>
 <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.3/jquery.min.js"></script>
 <link href="https://unpkg.com/tabulator-tables@6.0.0/dist/css/tabulator.min.css" rel="stylesheet">
