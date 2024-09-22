@@ -33,7 +33,7 @@ SECRET_KEY = env('SECRET_KEY')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ["lignin-9b46895f6fe0.herokuapp.com", "127.0.0.1"]
+ALLOWED_HOSTS = ["lignin-9b46895f6fe0.herokuapp.com", "lignin-staging-6f49197977a2", "127.0.0.1"]
 
 
 # Application definition
