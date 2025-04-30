@@ -1,3 +1,4 @@
+import itertools
 import json
 
 from django import forms
@@ -226,15 +227,36 @@ def get_snowball(request, question_id):
     id_strings = [x.references.split(" ") + x.citations.split(" ") for x in included_papers]
     snowball_set_size = len(id_strings)
 
-    d = defaultdict(int)
+    id_to_links = dict([(x.ssPaperID, x.references.split(" ") + x.citations.split(" ")) for x in included_papers])
+
+
+    counter_dict = defaultdict(int)
     for paper_links in id_strings:
         for paper_id in paper_links:
-            d[paper_id] += 1
+            counter_dict[paper_id] += 1
 
-    most_refs = sorted(d.items(), key=lambda item: item[1], reverse=True)
+    refs_dict = defaultdict(list)
+    for paper_id, paper_links in id_to_links.items():
+        for linked_paper_id in paper_links:
+            refs_dict[linked_paper_id].append(paper_id)
+
+    most_refs = sorted(counter_dict.items(), key=lambda item: item[1], reverse=True)
     most_refs_filtered = [x for x in most_refs if x[0] not in ignored_paper_ids]
+    pct_dict = dict()
     #print(most_refs)
     #print(most_refs_filtered)
+    #print(refs_dict)
+    for i in most_refs_filtered[:10]:
+        pair_is_linked = []
+        for paper_a_id, paper_b_id in itertools.combinations(refs_dict[i[0]], 2):
+            paper_a = Paper.objects.get(ssPaperID=paper_a_id)
+            pair_is_linked.append(paper_b_id in paper_a.references.split(" ") or paper_b_id in paper_a.citations.split(" "))
+        print(pair_is_linked)
+        print(sum(pair_is_linked) / float(len(pair_is_linked)))
+        pct_dict[i[0]] = sum(pair_is_linked) / float(len(pair_is_linked))
+        print()
+
+    # question: is X related to Y?
 
     r = requests.post(
         "https://api.semanticscholar.org/graph/v1/paper/batch?fields=title,year,authors,url",
@@ -246,8 +268,8 @@ def get_snowball(request, question_id):
 
     for paper in response:
         if paper:
-            paper["occurrence_number"] = d[paper['paperId']]
-            paper["occurrence"] = f"{d[paper['paperId']]}/{snowball_set_size}"
+            paper["occurrence_number"] = counter_dict[paper['paperId']]
+            paper["occurrence"] = f"{counter_dict[paper['paperId']]}/{snowball_set_size} ({pct_dict[paper['paperId']]:.3f})"
 
     return JsonResponse({"data": sorted([i for i in response if i], key=lambda x: x["occurrence_number"], reverse=True)})
 
