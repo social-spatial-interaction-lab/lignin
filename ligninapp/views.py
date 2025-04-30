@@ -246,7 +246,7 @@ def get_snowball(request, question_id):
     #print(most_refs)
     #print(most_refs_filtered)
     #print(refs_dict)
-    for i in most_refs_filtered[:10]:
+    for i in most_refs_filtered[:50]:
         pair_is_linked = []
         for paper_a_id, paper_b_id in itertools.combinations(refs_dict[i[0]], 2):
             paper_a = Paper.objects.get(ssPaperID=paper_a_id)
@@ -260,7 +260,7 @@ def get_snowball(request, question_id):
 
     r = requests.post(
         "https://api.semanticscholar.org/graph/v1/paper/batch?fields=title,year,authors,url",
-        json={"ids": [x[0] for x in most_refs_filtered[:10]]}
+        json={"ids": [x[0] for x in most_refs_filtered[:50]]}
     )
 
     response = r.json()
