@@ -223,12 +223,26 @@ def average_path_distance(G):
         cluster_pairs = C.order() * (C.order() - 1) / 2
 
         path_sum += cluster_nodes * nodes_accounted_for * full_graph_order # penalize every non-link between notes with full graph order path.
-        path_sum += nx.average_shortest_path_length(C) * cluster_pairs
+        node_pairs += cluster_nodes * nodes_accounted_for
 
+        path_sum += nx.average_shortest_path_length(C) * cluster_pairs
         node_pairs += cluster_pairs
+
         nodes_accounted_for += cluster_nodes
 
     return path_sum / node_pairs
+
+def average_path_distance_shorten(G, nodeignore):
+    path_sum = average_path_distance(G) * G.order() * (G.order() - 1) / 2
+    remove_total = 0
+
+    for C in (G.subgraph(c).copy() for c in nx.connected_components(G)):
+        if nodeignore in C:
+            remove_total += sum([v for k, v in nx.shortest_path_length(G, source = nodeignore).items()])
+        else:
+            remove_total += G.order() * C.order()
+
+    return float(path_sum - remove_total) / ((G.order() - 2) * (G.order() - 1) / 2)
 
 def get_snowball(request, question_id):
     question = get_object_or_404(Review, id=question_id)
@@ -275,21 +289,29 @@ def get_snowball(request, question_id):
 
     apl = average_path_distance(G)
     apl_drop = dict()
-    for i in most_refs_filtered[:50]:
-        G2 = G.copy()
-        G2.add_edges_from([(i[0], j) for j in refs_dict[i[0]]])
-        apl_drop[i[0]] = apl - average_path_distance(G2)
+    for i in counter_dict.items():
+        if i[0] not in ignored_paper_ids:
+            G2 = G.copy()
+            G2.add_edges_from([(i[0], j) for j in refs_dict[i[0]]])
+            apl_drop[i[0]] = apl - average_path_distance_shorten(G2, i[0])
+
+    #print(apl_drop)
+
+    most_drop = sorted(apl_drop.items(), key=lambda item: item[1], reverse=True)\
 
 
     # question: is X related to Y?
-    for i in most_refs_filtered[:50]:
+    for i in most_drop[:50]:
         pair_is_linked = []
         for paper_a_id, paper_b_id in itertools.combinations(refs_dict[i[0]], 2):
             paper_a = Paper.objects.get(ssPaperID=paper_a_id)
             pair_is_linked.append(paper_b_id in paper_a.references.split(" ") or paper_b_id in paper_a.citations.split(" "))
         #print(pair_is_linked)
         #print(sum(pair_is_linked) / float(len(pair_is_linked)))
-        pct_dict[i[0]] = sum(pair_is_linked) / float(len(pair_is_linked))
+        if len(pair_is_linked) == 0:
+            pct_dict[i[0]] = 0.0
+        else:
+            pct_dict[i[0]] = sum(pair_is_linked) / float(len(pair_is_linked))
         #print()
 
     # another metric - what bridges the most pairs?
@@ -301,7 +323,7 @@ def get_snowball(request, question_id):
 
     r = requests.post(
         "https://api.semanticscholar.org/graph/v1/paper/batch?fields=title,year,authors,url",
-        json={"ids": [x[0] for x in most_refs_filtered[:50]]}
+        json={"ids": [x[0] for x in most_drop[:50]]}
     )
 
     response = r.json()
@@ -309,7 +331,7 @@ def get_snowball(request, question_id):
 
     for paper in response:
         if paper:
-            paper["occurrence_number"] = counter_dict[paper['paperId']]
+            paper["occurrence_number"] = apl_drop[paper['paperId']] # counter_dict[paper['paperId']]
             paper["occurrence"] = f"{counter_dict[paper['paperId']]}/{snowball_set_size} ({pct_dict[paper['paperId']]:.3f}) ({apl_drop[paper['paperId']]:.3f})"
 
     return JsonResponse({"data": sorted([i for i in response if i], key=lambda x: x["occurrence_number"], reverse=True)})
