@@ -290,7 +290,7 @@ def get_snowball(request, question_id):
     apl = average_path_distance(G)
     apl_drop = dict()
     for i in counter_dict.items():
-        if i[0] not in ignored_paper_ids:
+        if i[0] not in ignored_paper_ids and i[1] > 1:
             G2 = G.copy()
             G2.add_edges_from([(i[0], j) for j in refs_dict[i[0]]])
             apl_drop[i[0]] = apl - average_path_distance_shorten(G2, i[0])
