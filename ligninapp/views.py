@@ -1,4 +1,5 @@
 import json
+import pickle
 
 from django import forms
 from django.shortcuts import render, get_object_or_404
@@ -251,3 +252,18 @@ def get_snowball(request, question_id):
 
     return JsonResponse({"data": sorted([i for i in response if i], key=lambda x: x["occurrence_number"], reverse=True)})
 
+def pdf_view(request):
+    with open("text_location.pkl", 'rb') as f:
+        text_locations = pickle.load(f)
+
+        locations_list = [{
+            "page": page["page"] + 1,
+            "rectangles": [{
+                "x0": r.x0, "y0": r.y0, "x1": r.x1, "y1": r.y1
+            } for r in page["rectangles"]]
+        } for page in text_locations]
+
+    locations = {
+        "locations": locations_list
+    }
+    return render(request, "ligninapp/pdf_view.html", {"highlight_data": json.dumps(locations)})

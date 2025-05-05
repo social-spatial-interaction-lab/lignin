@@ -11,5 +11,6 @@ urlpatterns = [
     path('question/<int:question_id>/snowball/', views.get_snowball),
     path('values/<entry_id>/<int:column_pk>/', views.edit_annotation),
     path('question/add/', views.ReviewCreate.as_view(), name='review-create'),
-    path('column/add/', views.create_column, name='column-create')
+    path('column/add/', views.create_column, name='column-create'),
+    path('pdf_view/', views.pdf_view, name='pdf_view'),
 ]

@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+{% load static %}
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>PDF Highlighter</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.3/jquery.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+  <style>
+    .pdf-container {
+      position: relative;
+    }
+    .highlight {
+      position: absolute;
+      background-color: rgba(255, 255, 0, 0.3);
+      pointer-events: none;
+      z-index: 10;
+    }
+    canvas {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+
+<div class="pdf-container" id="pdfContainer"></div>
+
+<script>
+const pdfUrl = "{% static 'ligninapp/aff_states.pdf' %}";
+const highlights = {{ highlight_data|safe }};  // Django: inject your JSON here
+
+const container = document.getElementById('pdfContainer');
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+
+pdfjsLib.getDocument(pdfUrl).promise.then(pdf => {
+  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+    pdf.getPage(pageNum).then(page => {
+      const viewport = page.getViewport({ scale: 1.5 });
+
+      // Create canvas for PDF page
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d');
+      canvas.height = viewport.height;
+      canvas.width = viewport.width;
+      canvas.style.display = 'block';
+      container.appendChild(canvas);
+
+      // Container for highlights
+      const highlightLayer = document.createElement('div');
+      highlightLayer.style.position = 'absolute';
+      highlightLayer.style.top = canvas.offsetTop + 'px';
+      highlightLayer.style.left = canvas.offsetLeft + 'px';
+      highlightLayer.style.width = canvas.width + 'px';
+      highlightLayer.style.height = canvas.height + 'px';
+      container.appendChild(highlightLayer);
+
+      // Render PDF page
+      page.render({ canvasContext: context, viewport });
+
+      // Draw highlights if there are any for this page
+      const pageHighlights = highlights.locations.filter(loc => loc.page === pageNum);
+      pageHighlights.forEach(loc => {
+        loc.rectangles.forEach(rect => {
+          const [x0, y0, x1, y1] = [rect.x0, rect.y0, rect.x1, rect.y1];
+          const x = x0 * viewport.scale;
+          const y = (page.view[3] - y1) * viewport.scale;
+          const width = (x1 - x0) * viewport.scale;
+          const height = (y1 - y0) * viewport.scale;
+
+          const div = document.createElement('div');
+          div.className = 'highlight';
+          div.style.left = x + 'px';
+          div.style.top = y + 'px';
+          div.style.width = width + 'px';
+          div.style.height = height + 'px';
+          highlightLayer.appendChild(div);
+        });
+      });
+    });
+  }
+});
+</script>
+
+</body>
+</html>
