@@ -4,6 +4,10 @@ const findResults = $("#find-results");
 const paperTable = $("#paper-table");
 const snowballResults = $("#snowball-results");
 
+function toggleFullWidth() {
+    $("#paper-table-container").toggleClass("fullwidth");
+}
+
 function addPaper() {
     let paperId = $(this).attr("data-lignin-paperId");
     const thisButton = this;
@@ -187,6 +191,7 @@ function reloadPapers() {
             paperTable.empty();
             paperTable.append(table);
              */
+            $("#loading-indicator").hide();
         },
         'json'
     );
