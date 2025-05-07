@@ -117,6 +117,7 @@ function reloadPapers() {
 
             var table = new Tabulator("#paper-table", {
                 maxHeight:"80vh",
+                height:"80vh",
                 data:data.data, //assign data to table
                 layout:"fitData", //fit columns to width of table (optional)
                 columns: data.metadata,

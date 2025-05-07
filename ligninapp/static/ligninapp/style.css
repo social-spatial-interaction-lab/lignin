@@ -14,3 +14,7 @@ body {
     margin-left: calc(-100vw / 2 + 100% / 2 + 50px) !important;
     margin-right: calc(-100vw / 2 + 100% / 2 + 50px) !important;
 }
+
+.tabulator {
+    background-color: #ddd !important;
+}
