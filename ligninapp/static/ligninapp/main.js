@@ -191,6 +191,7 @@ function reloadPapers() {
             paperTable.empty();
             paperTable.append(table);
              */
+            $("#loading-indicator").hide();
         },
         'json'
     );
