@@ -5,3 +5,12 @@ th, td {
 body {
     max-width: 60rem;
 }
+
+#paper-table-container {
+    transition: margin 500ms;
+}
+
+#paper-table-container.fullwidth {
+    margin-left: calc(-100vw / 2 + 100% / 2 + 50px) !important;
+    margin-right: calc(-100vw / 2 + 100% / 2 + 50px) !important;
+}

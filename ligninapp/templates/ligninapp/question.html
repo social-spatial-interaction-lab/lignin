@@ -29,8 +29,11 @@ This page has three sections:
         <!--a href="admin/ligninapp/question/{{ question_id }}/change/">Add Existing Column</a-->
         <a href="/column/add/?review={{ question_id }}">Create New Column</a>
         | Add rows by the "search" tool <a href="#h3-search">below.</a>
+        | <button onclick="toggleFullWidth()">Toggle Full Width</button>
     </p>
-    <div id="paper-table">Loading paper table...</div>
+    <div id="paper-table-container">
+        <div id="paper-table">Loading paper table...</div>
+    </div>
 </div>
 
 <div>
