@@ -253,7 +253,7 @@ def get_snowball(request, question_id):
     return JsonResponse({"data": sorted([i for i in response if i], key=lambda x: x["occurrence_number"], reverse=True)})
 
 def pdf_view(request):
-    with open("text_location.pkl", 'rb') as f:
+    with open("text_location_list_2.pkl", 'rb') as f:
         text_locations = pickle.load(f)
 
         locations_list = [{
@@ -261,7 +261,7 @@ def pdf_view(request):
             "rectangles": [{
                 "x0": r.x0, "y0": r.y0, "x1": r.x1, "y1": r.y1
             } for r in page["rectangles"]]
-        } for page in text_locations]
+        } for q in text_locations for page in q]
 
     locations = {
         "locations": locations_list

@@ -2,6 +2,7 @@ import fitz  # PyMuPDF
 import json
 import requests
 import pickle
+from fuzzysearch import find_near_matches
 
 
 # Step 1: Extract text from PDF
@@ -26,7 +27,7 @@ Answer Format:
     {{
        "question_id": "...",
        "answer": "...",
-       "evidence": "...",
+       "evidence": ["...", "..."],
        "confidence": 0.5
     }},
     ... # Other questions have the same dictionary structure within the 'responses' array.
@@ -35,7 +36,7 @@ Answer Format:
 
 - "question_id" should match one of the question_ids from the questions given below
 - "answer" should be an answer to the question in a word, phrase, or sentence.
-- "evidence" should be text directly from the research paper given above.
+- "evidence" should provide relevant parts of text that formed this answer. The evidence text should match the text of the paper exactly. There should be one entry in the "evidence" array for every continuous passage of the text used - if a sentence or phrase is cut out in between, then there needs to be two separate entries in the list.
 - "confidence" should be the confidence score of the answer as a float, where 0.0 is low confidence, 1.0 is high confidence.
 
 Questions:
@@ -43,7 +44,7 @@ Questions:
 - What information was given about the age of the participants in the study? (question_id = "participant_ages")
 - What devices were used to track the motion in the study? (question_id = "tracking_device")
 - What frame rate was this motion tracked at? (question_id = "frame_rate")
-- What variable (environmental or individual) was being inferred from this motion? (question_id = "inferred_variable")
+- What feature(s) of the individual or environment was being inferred from this motion? (question_id = "inferred_variable")
 
 """
     return prompt
@@ -69,17 +70,15 @@ def query_llm(prompt, model="mistralai/Mistral-7B-Instruct-v0.3", token="YOUR_DE
 
 
 # Step 4: Match extracted evidence with original PDF text (fuzzy)
-def fuzzy_match_evidence(evidence, text_by_page):
-    best_score = 0
-    best_page = -1
-    for i, page_text in enumerate(text_by_page):
-        #score = Levenshtein.ratio(evidence.lower(), page_text.lower())
-        #if score > best_score:
-        #    best_score = score
-        #    best_page = i
-        pass
-    return best_page, best_score
-
+def fuzzy_match_evidence(evidence, full_text):
+    for dist in [0, 7, 50]:
+        near_matches = find_near_matches(evidence, full_text, max_l_dist=dist)
+        if near_matches:
+            break
+    print(f"{len(near_matches)} NEAR MATCH(ES)")
+    print(near_matches)
+    best_match = near_matches[0]
+    return best_match.matched
 
 # Step 5: Locate evidence in PDF by bounding boxes
 def locate_text_in_pdf(pdf_path, target_text):
@@ -89,7 +88,7 @@ def locate_text_in_pdf(pdf_path, target_text):
     for page_number in range(len(doc)):
         page = doc[page_number]
         ptm = page.transformation_matrix
-        text_instances = page.search_for(target_text, quads=True)  # returns quads, better spatial matching
+        text_instances = page.search_for(target_text, quads=True, flags = fitz.TEXT_PRESERVE_WHITESPACE | fitz.TEXT_PRESERVE_LIGATURES | fitz.TEXT_MEDIABOX_CLIP)  # returns quads, better spatial matching
         if text_instances:
             locations.append({
                 "page": page_number,
@@ -110,42 +109,33 @@ def analyze_pdf_question(pdf_path, question, api_token):
     print(prompt[:500] + "\n...prompt truncated...\n")
 
     print("Step 3: Querying LLM...")
-    llm_response = query_llm(prompt, token=api_token)
-    #with open("llm_response_2.pkl", 'wb') as f:
-    #    pickle.dump(llm_response, f)
-    with open("llm_response.pkl", 'rb') as f:
+    #llm_response = query_llm(prompt, token=api_token)
+    #with open("llm_response_3.pkl", 'wb') as f:
+    #   pickle.dump(llm_response, f)
+    with open("llm_response_3.pkl", 'rb') as f:
         llm_response = pickle.load(f)
     print("LLM response:", llm_response, "\n")
 
-    #print("Step 4: Matching evidence with page...")
-    #page_index, score = fuzzy_match_evidence(llm_response["evidence"], text_by_page)
-    #print(f"Best match on page {page_index + 1} with score {score:.2f}\n")
+    print("Step 4: Matching evidence with page...")
+    match_texts = [[fuzzy_match_evidence(q_part, full_text) for q_part in q_resp["evidence"]] for q_resp in llm_response["responses"] ]
+    print("Matchings: ")
+    for response, match in zip(llm_response["responses"], match_texts):
+        print(response["evidence"])
+        print(match)
+    print()
 
     print("Step 5: Locating evidence in PDF...")
-    locations = locate_text_in_pdf(pdf_path, llm_response["evidence"])
-    print("Text locations in PDF:", locations, "\n")
+    locations_list = [locate_text_in_pdf(pdf_path, match) for match_group in match_texts for match in match_group]
+    print("Text locations in PDF:", locations_list, "\n")
 
-    with open("text_location.pkl", 'wb') as f:
-        pickle.dump(locations, f)
+    with open("text_location_list_2.pkl", 'wb') as f:
+        pickle.dump(locations_list, f)
 
-    return {
-        "question": question,
-        "answer": llm_response["answer"],
-        "confidence": llm_response["confidence"],
-        #"page": page_index + 1,
-        "locations": locations
-    }
 
 if __name__ == "__main__":
-    result = analyze_pdf_question(
+    analyze_pdf_question(
         pdf_path="ligninapp/static/ligninapp/aff_states.pdf",
         question="How many participants are in the study?",
-        api_token=""
+        #api_token="REMOVED FOR COMMIT"
+        api_token="FAKE"
     )
-
-    # actually first, see if the text selection renders.
-
-    with open("text_location.pkl", 'rb') as f:
-        text_locations = pickle.load(f)
-        print(text_locations)
-
