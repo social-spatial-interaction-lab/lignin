@@ -85,6 +85,9 @@ def add_paper(request, question_id, paper_id):
         ).json()
 
         print(paper_details)
+        # When references are elided, the reference list can be None rather than an empty list. :(
+        if paper_details['references'] is None:
+            paper_details['references'] = []
 
         new_paper = Paper.objects.create(
             ssPaperID=paper_details['paperId'],
