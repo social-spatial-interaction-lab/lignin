@@ -13,6 +13,9 @@ from .forms import UploadedPaperForm, ReviewForm
 from django.views.decorators.http import require_POST
 from django.urls import reverse
 from django.shortcuts import redirect
+from .models import UploadedPaper
+from django.views.decorators.http import require_http_methods
+
 
 
 import environ
@@ -122,55 +125,36 @@ def add_paper(request, question_id, paper_id):
 
     return HttpResponse(status=201)
 
-
-from django.http import JsonResponse
-from .models import Paper, UploadedPaper, Value
-
+    
 def get_papers(request, question_id):
-    question = get_object_or_404(Question, id=question_id)
+    uploads = UploadedPaper.objects.filter(review_id=question_id)
 
-    # Normal papers
-    papers = Paper.objects.filter(question=question)
-    values = Value.objects.filter(paper__in=papers)
+    upload_data = []
+    for upload in uploads:
+        upload_data.append({
+            "id": f"upload-{upload.id}",
+            "source": "upload",
+            "title": upload.title,
+            "author": upload.author or "",
+            "year": upload.year or "",
+            "url": upload.file.url,
+            "notes": f"Uploaded on {upload.uploaded_at.strftime('%Y-%m-%d %H:%M')}",
+        })
 
-    # Uploaded papers
-    uploaded = UploadedPaper.objects.filter(question=question)
+    response_data = {
+        "data": upload_data,
+        "metadata": [
+            {"title": "Title", "field": "title"},
+            {"title": "Author", "field": "author"},
+            {"title": "Year", "field": "year"},
+            {"title": "Notes", "field": "notes"},
+            {"title": "URL", "field": "url"},
+        ]
+    }
 
-    # Combine into a unified list
-    data = []
+    return JsonResponse(response_data)
 
-    for paper in papers:
-        row = {
-            "id": paper.id,
-            "title": paper.title,
-            "type": "semantic",  # can be used to distinguish
-        }
-        # Populate grid values
-        for val in values.filter(paper=paper):
-            row[val.column.name] = val.value_text
-        data.append(row)
 
-    for up in uploaded:
-        row = {
-            "id": f"upload-{up.id}",
-            "title": up.title,
-            "link": up.file.url,
-            "uploaded_at": up.uploaded_at.strftime('%Y-%m-%d %H:%M'),
-            "type": "upload"
-        }
-        data.append(row)
-
-    # Add column headers dynamically if needed
-    metadata = [
-        {"title": "Title", "field": "title"},
-        {"title": "Link", "field": "link", "formatter": "link"},
-        {"title": "Uploaded", "field": "uploaded_at"},
-    ]
-
-    return JsonResponse({
-        "data": data,
-        "metadata": metadata
-    })
 
 
 def edit_annotation(request, entry_id, column_pk):
@@ -279,13 +263,61 @@ def add_columns_papers(request, review_id):
     review = get_object_or_404(Review, pk=review_id)
     return render(request, "ligninapp/add_columns_papers.html", {"review": review})
 
-def upload_paper_modal(request, question_id):
+def upload_paper(request, question_id):
     review = get_object_or_404(Review, id=question_id)
+
     if request.method == 'POST':
-        form = UploadedPaperForm(request.POST, request.FILES)
-        if form.is_valid():
-            uploaded_paper = form.save(commit=False)
-            uploaded_paper.review = review
-            uploaded_paper.save()
-            return redirect('question', question_id=question_id)
-    return redirect('question', question_id=question_id)
+        title = request.POST.get('title')
+        author = request.POST.get('author', '')
+        year = request.POST.get('year') or None
+        file = request.FILES.get('file')
+
+        UploadedPaper.objects.create(
+            review=review,
+            title=title,
+            author=author,
+            year=year if year else None,
+            file=file
+        )
+
+    return redirect('question', question_id)
+
+@require_http_methods(["DELETE"])
+def delete_uploaded_paper(request, paper_id):
+    try:
+        paper = UploadedPaper.objects.get(pk=paper_id)
+        paper.delete()
+        return JsonResponse({'success': True})
+    except UploadedPaper.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'Paper not found'}, status=404)
+
+
+@require_http_methods(["POST"])
+def update_uploaded_paper(request, paper_id):
+    try:
+        paper = UploadedPaper.objects.get(pk=paper_id)
+        data = json.loads(request.body)
+
+        paper.title = data.get("title", paper.title)
+        paper.author = data.get("author", paper.author)
+        paper.year = data.get("year", paper.year)
+        paper.save()
+
+        return JsonResponse({'success': True})
+    except UploadedPaper.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'Paper not found'}, status=404)
+
+@require_http_methods(["POST"])
+def replace_uploaded_paper(request, paper_id):
+    try:
+        paper = UploadedPaper.objects.get(pk=paper_id)
+        new_file = request.FILES.get("file")
+        if not new_file:
+            return JsonResponse({"success": False, "error": "No file uploaded"})
+
+        paper.file = new_file
+        paper.save()
+
+        return JsonResponse({"success": True})
+    except UploadedPaper.DoesNotExist:
+        return JsonResponse({"success": False, "error": "Paper not found"}, status=404)

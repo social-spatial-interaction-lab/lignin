@@ -25,7 +25,7 @@ function addPaper() {
 }
 
 function rejectPaper() {
-let paperId = $(this).attr("data-lignin-paperId");
+    let paperId = $(this).attr("data-lignin-paperId");
     const thisButton = this;
     $.ajax({
         url: '/question/' + questionID + '/papers/reject/' + paperId + '/',
@@ -46,17 +46,17 @@ function stringOrFALN(keyname, entry) {
         return entry[keyname];
     }
 }
+
 function arrayToTable(array, additional, drop, columnIDs) {
-    // additional is key-value pars,
-    const dataKeys = Object.keys(array.reduce(function(acc, curr) {Object.keys(curr).forEach(x => acc[x] = true); return acc;}, {})).filter(item => !drop.includes(item));
+    const dataKeys = Object.keys(array.reduce(function(acc, curr) {
+        Object.keys(curr).forEach(x => acc[x] = true); return acc;
+    }, {})).filter(item => !drop.includes(item));
     const additionalKeys = Array.from(Object.keys(additional));
     const table = $("<table>");
-    // Create the header row by merging the keys from the data with additional, javascript-defined keys
     table.append($("<tr>").append(
         dataKeys.concat(additionalKeys)
             .map(keyname => $("<th>").text(keyname))
-        ));
-    // Create each paper row by creating the td cells then merging with the other td cells
+    ));
     table.append(array.map(entry => $("<tr>").attr("data-lignin-paperId", entry["ssPaperID"] || entry["paperId"]).append(
         dataKeys.map(keyname => $("<td>").text(stringOrFALN(keyname, entry)).attr("data-lignin-columnId", columnIDs[keyname]))
             .concat(additionalKeys.map(keyname => additional[keyname](entry)))
@@ -71,131 +71,165 @@ function titleAndLink(entry) {
 $("#find").submit(function() {
     const queryVal = $("#find-query").val();
 
-    $.get(
-        {
-            url: "https://api.semanticscholar.org/graph/v1/paper/search?query=" + encodeURI(queryVal) + "&fields=title,year,authors,url",
-            data: {},
-            success: function(data) {
-                const table = arrayToTable(data.data, {
-                    "Title" : titleAndLink,
-                    "add?" : entry => $("<td>").append($("<button>").text("add").attr("data-lignin-paperId", entry["paperId"]).click(addPaper))
-                }, ["paperId", "url"], {});
-                findResults.empty();
-                findResults.append(table);
-            },
-            dataType: 'json',
-            headers: {
-                "accept": "application/json",
-                //"Access-Control-Allow-Origin":"*",
-                "x-api-key":"PDPwFWmKA72Rlsuqd2xmF3YVZhB75BUd3ylD4a61"
-            }
-        });
+    $.get({
+        url: "https://api.semanticscholar.org/graph/v1/paper/search?query=" + encodeURI(queryVal) + "&fields=title,year,authors,url",
+        success: function(data) {
+            const table = arrayToTable(data.data, {
+                "Title": titleAndLink,
+                "add?": entry => $("<td>").append($("<button>").text("add").attr("data-lignin-paperId", entry["paperId"]).click(addPaper))
+            }, ["paperId", "url"], {});
+            findResults.empty();
+            findResults.append(table);
+        },
+        dataType: 'json',
+        headers: {
+            "accept": "application/json",
+            "x-api-key": "PDPwFWmKA72Rlsuqd2xmF3YVZhB75BUd3ylD4a61"
+        }
+    });
 
     return false;
 });
 
 $("#snowball").submit(function() {
-    $.get(
-        '/question/' + questionID + '/snowball/', {},
-        function( data ) {
-            const table = arrayToTable(data.data, {
-                "Title" : titleAndLink,
-                "add?" : entry => $("<td>").append($("<button>").text("add").attr("data-lignin-paperId", entry["paperId"]).click(addPaper)),
-                "reject?" : entry => $("<td>").append($("<button>").text("reject").attr("data-lignin-paperId", entry["paperId"]).click(rejectPaper))
-            }, ['paperId', 'url', 'title', 'occurrence_number'], {});
-            snowballResults.empty();
-            snowballResults.append(table);
-        }
-    )
+    $.get('/question/' + questionID + '/snowball/', {}, function(data) {
+        const table = arrayToTable(data.data, {
+            "Title": titleAndLink,
+            "add?": entry => $("<td>").append($("<button>").text("add").attr("data-lignin-paperId", entry["paperId"]).click(addPaper)),
+            "reject?": entry => $("<td>").append($("<button>").text("reject").attr("data-lignin-paperId", entry["paperId"]).click(rejectPaper))
+        }, ['paperId', 'url', 'title', 'occurrence_number'], {});
+        snowballResults.empty();
+        snowballResults.append(table);
+    });
     return false;
-})
+});
+
+function triggerReplace(paperId) {
+    alert("Replace triggered for paper ID: " + paperId);
+    // TODO: Implement modal or file upload for replacing PDF
+}
+
+function triggerReplace(paperId) {
+    const modal = document.getElementById("replaceModal");
+    modal.style.display = "block";
+    document.getElementById("replacePaperId").value = paperId;
+}
+
+function closeReplaceModal() {
+    document.getElementById("replaceModal").style.display = "none";
+}
+
 
 function reloadPapers() {
-    $.get(
-        '/question/' + questionID + '/papers/', {},
-        function( data ) {
+    $.get('/question/' + questionID + '/papers/', {}, function(data) {
+        var table = new Tabulator("#paper-table", {
+            maxHeight: "80vh",
+            height: "80vh",
+            data: data.data,
+            layout: "fitData",
+            renderHorizontal: "virtual",
+            editTriggerEvent: "dblclick",
+            persistence: {
+                columns: ["width"]
+            },
+            columns: [
+                { title: "Title", field: "title", editor: "input" },
+                { title: "Author", field: "author", editor: "input" },
+                { title: "Year", field: "year", editor: "input" },
+                { title: "Notes", field: "notes" },
+                {
+                    title: "Actions",
+                    field: "url",
+                    formatter: function(cell, formatterParams, onRendered) {
+                        const fileUrl = cell.getValue();
+                        const paperId = cell.getRow().getData().id.replace("upload-", "");
+                        return `
+                            <a href="${fileUrl}" target="_blank" style="margin-right: 10px;">🔍 View</a>
+                            <button onclick="triggerReplace('${paperId}')">📝 Replace</button>
+                        `;
+                    },
+                    widthGrow: 2
+                },
+                {
+                    title: "Delete",
+                    formatter: "buttonCross",
+                    width: 100,
+                    align: "center",
+                    cellClick: function(e, cell) {
+                        const paperId = cell.getRow().getData().id.replace("upload-", "");
+                        fetch(`/papers/delete/${paperId}/`, {
+                            method: "DELETE",
+                            headers: {
+                                "X-CSRFToken": csrftoken,
+                            },
+                        })
+                        .then(res => res.json())
+                        .then(data => {
+                            if (data.success) {
+                                cell.getRow().delete();
+                            } else {
+                                alert("Delete failed: " + data.error);
+                            }
+                        });
+                    }
+                }
+            ]
+        });
 
-            var table = new Tabulator("#paper-table", {
-                maxHeight:"80vh",
-                height:"80vh",
-                data:data.data, //assign data to table
-                layout:"fitData", //fit columns to width of table (optional)
-                columns: data.metadata,
-                renderHorizontal:"virtual",
-                editTriggerEvent:"dblclick",
-                persistence: {
-                    columns: ["width"]
+        table.on("cellEdited", function(cell) {
+            const rowData = cell.getRow().getData();
+            const paperId = rowData.id.replace("upload-", "");
+
+            fetch(`/papers/update/${paperId}/`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-CSRFToken": csrftoken,
+                },
+                body: JSON.stringify({
+                    title: rowData.title,
+                    author: rowData.author,
+                    year: rowData.year,
+                }),
+            })
+            .then((res) => res.json())
+            .then((data) => {
+                if (!data.success) {
+                    alert("Update failed: " + data.error);
                 }
             });
+        });
 
-            // show the data
-            table.on("cellEdited", function(cell){
-                //console.log(cell.getRow().getData());
-                //console.log(cell.getColumn().getDefinition());
-                const paperId = cell.getRow().getData()["id"];
-                const columnId = cell.getColumn().getDefinition()["column_id"];
-                $.ajax({
-                    url: '/values/' + paperId + '/' + columnId + '/',
-                    headers: {
-                        'X-CSRFToken': csrftoken
-                    },
-                    data: {
-                        "value_text": cell.getValue(),
-                        "note_text": ""
-                    },
-                    type: 'POST',
-                    success: function(result) {
-                        // do some niuce UI thing here.
-                    }
-                });
-
-                // make a call.
-
-            });
-
-            /*
-            const tableTds = table.find('td');
-            //tableTds.attr("contenteditable", "true");
-            tableTds.on('focus', function() {
-                const $this = $(this);
-                $this.data('before', $this.html());
-            }).on('blur', function() {
-                const $this = $(this);
-                if ($this.data('before') !== $this.html()) {
-                    $this.data('before', $this.html());
-                    $this.trigger('change');
-                }
-            }).on('change', function() {
-                const $this = $(this);
-                // alert($this.text());
-
-                // parse out paper ID and qusiotn ID
-                const paperId = $this.closest('tr').attr("data-lignin-paperId");
-                const columnId = $this.attr("data-lignin-columnId");
-
-                $.ajax({
-                    url: '/values/' + paperId + '/' + columnId + '/',
-                    headers: {
-                        'X-CSRFToken': csrftoken
-                    },
-                    data: {
-                        "value_text": $this.text(),
-                        "note_text": ""
-                    },
-                    type: 'POST',
-                    success: function(result) {
-                        // do some niuce UI thing here.
-                    }
-                });
-            });
-
-            paperTable.empty();
-            paperTable.append(table);
-             */
-            $("#loading-indicator").hide();
-        },
-        'json'
-    );
+        $("#loading-indicator").hide();
+    }, 'json');
 }
 
 reloadPapers();
+
+
+document.getElementById("replaceForm").addEventListener("submit", function(e) {
+    e.preventDefault();
+
+    const paperId = document.getElementById("replacePaperId").value;
+    const fileInput = document.getElementById("newFile");
+    const formData = new FormData();
+    formData.append("file", fileInput.files[0]);
+
+    fetch(`/papers/replace/${paperId}/`, {
+        method: "POST",
+        headers: {
+            "X-CSRFToken": csrftoken
+        },
+        body: formData
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            alert("File replaced successfully!");
+            closeReplaceModal();
+            reloadPapers();
+        } else {
+            alert("Replace failed: " + data.error);
+        }
+    });
+});

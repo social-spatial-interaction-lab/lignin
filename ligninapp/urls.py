@@ -1,5 +1,6 @@
 from django.urls import path
-
+from django.conf import settings
+from django.conf.urls.static import static
 from . import views
 
 urlpatterns = [
@@ -13,8 +14,10 @@ urlpatterns = [
     path('question/add/', views.create_review, name='review-create'),
     path('column/add/', views.create_column, name='column-create'),
     path('question/add/save_title/', views.save_review_title, name='save-title'),
-    path('question/<int:question_id>/upload-paper/', views.upload_paper_modal, name='upload-paper'),
+    path('question/<int:question_id>/upload-paper/', views.upload_paper, name='upload-paper'),
     path('review/save-title/', views.save_review_title, name='save-review-title'),
-    path('question/<int:question_id>/upload-paper/', views.upload_paper_modal, name='upload-paper'),
-    path('question/add/step2/<int:review_id>/', views.add_columns_papers, name='add-columns-papers')
-]
+    path('papers/delete/<int:paper_id>/', views.delete_uploaded_paper, name='delete_uploaded_paper'),
+    path("papers/update/<int:paper_id>/", views.update_uploaded_paper, name="update_uploaded_paper"),
+    path("papers/replace/<int:paper_id>/", views.replace_uploaded_paper, name="replace_uploaded_paper"),
+    path('question/add/step2/<int:review_id>/', views.add_columns_papers, name='add-columns-papers'),
+] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
