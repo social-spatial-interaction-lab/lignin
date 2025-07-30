@@ -1,0 +1,19 @@
+{% load static %}
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Create Review - Step 1</title>
+  <link rel="stylesheet" href="{% static 'ligninapp/style.css' %}">
+</head>
+<body>
+  <h1>Create a New Review</h1>
+
+  <h2>Step 1: Confirm Review Title</h2>
+  <form method="POST" action="{% url 'save-title' %}">
+    {% csrf_token %}
+    <label for="review_title">Review Title:</label><br>
+    <input type="text" id="review_title" name="review_title" value="{{ title }}"><br><br>
+    <button type="submit" class="btn create">Continue</button>
+  </form>
+</body>
+</html>

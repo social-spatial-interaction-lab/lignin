@@ -111,3 +111,12 @@ class Value(RulesModel):
 
     def __str__(self):
         return f"{self.column} for {self.entry}: {self.value}"
+
+class UploadedPaper(RulesModel):
+    review = models.ForeignKey(Review, on_delete=models.CASCADE, related_name="uploaded_papers")
+    title = models.CharField(max_length=255)
+    file = models.FileField(upload_to='uploaded_papers/')
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.title

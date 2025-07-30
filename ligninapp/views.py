@@ -1,16 +1,19 @@
 import json
-
 from django import forms
-from django.shortcuts import render, get_object_or_404
+from django.shortcuts import render, redirect, get_object_or_404
 from django.http import HttpResponse, JsonResponse, HttpResponseRedirect
 from django.core import serializers
 from rules.contrib.views import PermissionRequiredMixin
-
 from .models import Paper, Review, Value, Column, LigninUser, Entry
 from collections import defaultdict
 import requests
 from rules import has_perm
 from django.views.generic.edit import CreateView, UpdateView, DeleteView
+from .forms import UploadedPaperForm, ReviewForm
+from django.views.decorators.http import require_POST
+from django.urls import reverse
+from django.shortcuts import redirect
+
 
 import environ
 env = environ.Env()
@@ -37,6 +40,13 @@ class ReviewCreate(PermissionRequiredMixin, CreateView):
     model = Review
     fields = ['question_text', 'default_permission']
     permission_required = 'ligninapp.add_review'
+
+    def get_initial(self):
+        initial = super().get_initial()
+        if 'title' in self.request.GET:
+            initial['question_text'] = self.request.GET['title']
+        return initial
+
 
 
 class NewColumnForm(forms.Form):
@@ -113,74 +123,53 @@ def add_paper(request, question_id, paper_id):
     return HttpResponse(status=201)
 
 
+from django.http import JsonResponse
+from .models import Paper, UploadedPaper, Value
+
 def get_papers(request, question_id):
-    question = get_object_or_404(Review, id=question_id)
+    question = get_object_or_404(Question, id=question_id)
 
-    # get columns for that question.
-    columns = question.columns.all()
-    paper_fields = ['year', 'faln'] # 'ssPaperID',
+    # Normal papers
+    papers = Paper.objects.filter(question=question)
+    values = Value.objects.filter(paper__in=papers)
 
-    # loop through the serialized files and pull relevant info
-    result = []
-    for subpaper in question.entries.all(): # these are objects, one by one.
-        paper = subpaper.paper
-        # extract the basics (year, faln, etc)
-        paper_json = json.loads(serializers.serialize(
-            'json',
-            Paper.objects.filter(pk=paper.pk),
-            fields=paper_fields))
+    # Uploaded papers
+    uploaded = UploadedPaper.objects.filter(question=question)
 
-        paper_info = paper_json[0]["fields"]  # there's guaranteed to be one and only one.
-        paper_info["title"] = paper.title
-        paper_info["link"] = paper.url
-        paper_info["description"] = subpaper.description
-        paper_info["id"] = subpaper.id
-        for column in columns:
-            descriptions = Value.objects.filter(column=column, entry=subpaper)
-            paper_info[column.name] = descriptions[0].value if descriptions else ""
+    # Combine into a unified list
+    data = []
 
-        result.append(paper_info)
-        #
+    for paper in papers:
+        row = {
+            "id": paper.id,
+            "title": paper.title,
+            "type": "semantic",  # can be used to distinguish
+        }
+        # Populate grid values
+        for val in values.filter(paper=paper):
+            row[val.column.name] = val.value_text
+        data.append(row)
 
-    column_mds = [
-        {"title": "Title", "field": "title", "formatter": "textarea"},
-        {"title": "Link", "field": "link", "formatter": "link", "formatterParams": {
-            "label": "@",
-            "target": "_blank"
-        }}
+    for up in uploaded:
+        row = {
+            "id": f"upload-{up.id}",
+            "title": up.title,
+            "link": up.file.url,
+            "uploaded_at": up.uploaded_at.strftime('%Y-%m-%d %H:%M'),
+            "type": "upload"
+        }
+        data.append(row)
+
+    # Add column headers dynamically if needed
+    metadata = [
+        {"title": "Title", "field": "title"},
+        {"title": "Link", "field": "link", "formatter": "link"},
+        {"title": "Uploaded", "field": "uploaded_at"},
     ]
 
-    for title in paper_fields: #["description", "id"]:
-        column_md = {}
-        column_md["title"] = title
-        column_md["field"] = title
-        column_mds.append(column_md)
-
-    for column in columns:
-        column_md = {}
-        column_md["title"] = column.name
-        column_md["field"] = column.name
-        column_md["editor"] = True
-        column_md["column_id"] = column.id
-        column_md["formatter"] = "textarea"
-        column_md["headerPopupIcon"] = "&#128712;"
-        if column.column_info:
-            column_md["headerPopup"] = column.column_info.replace("\n", "<br />\n")
-        column_mds.append(column_md)
-
-    # add IDs
-
-    # rectangle:
-    # {id: f..
-    #  	{id:4, name:"Brendon Philips", age:"125", col:"orange", dob:"01/08/1980"},
-    #  	{id:5, name:"Margret Marmaduke", age:"16", col:"yellow", dob:"31/01/1999"},
-    # "column_metadata: [
-    # 	 	{title:"Favourite Color", field:"col"},
-    # 	 	{title:"Date Of Birth", field:"dob", sorter:"date", hozAlign:"center"},
-    # 	 	]
     return JsonResponse({
-        "data": result,
-        "metadata": column_mds
+        "data": data,
+        "metadata": metadata
     })
 
 
@@ -254,3 +243,49 @@ def get_snowball(request, question_id):
 
     return JsonResponse({"data": sorted([i for i in response if i], key=lambda x: x["occurrence_number"], reverse=True)})
 
+def upload_paper(request):
+    if request.method == 'POST':
+        form = UploadedPaperForm(request.POST, request.FILES)
+        if form.is_valid():
+            form.save()
+            return HttpResponseRedirect('/')  # adjust redirect as needed
+    else:
+        form = UploadedPaperForm()
+    return render(request, 'ligninapp/upload_paper.html', {'form': form})
+
+
+def create_review(request):
+    title = request.GET.get("title", "").strip()
+    if title:
+        review = Review.objects.create(question_text=title, default_permission='MOD')
+    return redirect("question", question_id=review.id)
+    return redirect("index")  # fallback if title is empty
+
+@require_POST
+
+def save_review_title(request):
+    title = request.POST.get("title", "").strip()
+    if not title:
+        return JsonResponse({"error": "Missing title"}, status=400)
+
+    review = Review.objects.create(
+        question_text=title,
+        default_permission="VIEW",
+    )
+
+    return JsonResponse({"redirect_url": reverse("add-columns-papers", args=[review.id])})
+
+def add_columns_papers(request, review_id):
+    review = get_object_or_404(Review, pk=review_id)
+    return render(request, "ligninapp/add_columns_papers.html", {"review": review})
+
+def upload_paper_modal(request, question_id):
+    review = get_object_or_404(Review, id=question_id)
+    if request.method == 'POST':
+        form = UploadedPaperForm(request.POST, request.FILES)
+        if form.is_valid():
+            uploaded_paper = form.save(commit=False)
+            uploaded_paper.review = review
+            uploaded_paper.save()
+            return redirect('question', question_id=question_id)
+    return redirect('question', question_id=question_id)
