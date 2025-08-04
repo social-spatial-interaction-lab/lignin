@@ -10,31 +10,31 @@
 
   <!-- Modal Styling -->
   <style>
-    .modal {
-      display: none;
-      position: fixed;
-      z-index: 1000;
-      left: 0; top: 0;
-      width: 100%; height: 100%;
-      background-color: rgba(0, 0, 0, 0.6);
-    }
+    .modal { display:none; position:fixed; z-index:1000; left:0; top:0; width:100%; height:100%; background:rgba(0,0,0,.6); }
     .modal-content {
-      background-color: #fefefe;
-      margin: 10% auto;
-      padding: 30px;
-      border: 1px solid #888;
-      width: 50%;
-      border-radius: 8px;
-      box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+      background:#fff; margin:10% auto; padding:30px; border:1px solid #888;
+      width:50%; border-radius:8px; box-shadow:0 5px 15px rgba(0,0,0,.3);
     }
-    .close {
-      color: #aaa;
-      float: right;
-      font-size: 28px;
-      font-weight: bold;
-      cursor: pointer;
-    }
+    .close { color:#aaa; float:right; font-size:28px; font-weight:bold; cursor:pointer; }
+
+    /* Paper viewer modal */
+    .paper-modal { display:none; position:fixed; inset:0; z-index:1000; background:rgba(0,0,0,.6); }
+    .paper-modal .wrap { background:#fff; width:90%; height:85vh; margin:4vh auto; border-radius:8px; display:flex; flex-direction:column; }
+    .paper-modal header { display:flex; align-items:center; justify-content:space-between; padding:10px 16px; border-bottom:1px solid #eee; }
+    .paper-modal header h4 { margin:0; font-weight:600; }
+    .paper-modal .body { flex:1; display:flex; min-height:0; }
+    .paper-modal .left { flex:1 1 65%; border-right:1px solid #eee; min-width:0; }
+    .paper-modal .left iframe { width:100%; height:100%; border:0; }
+    .paper-modal .right { flex:0 0 35%; padding:16px; overflow:auto; }
+    .paper-modal .footer { padding:10px 16px; border-top:1px solid #eee; text-align:right; }
+    .paper-modal .close-btn { background:transparent; border:0; font-size:22px; cursor:pointer; }
+    .paper-modal .muted { color:#666; font-size:.9rem; }
   </style>
+
+  <script>
+    const STATIC_BASE = "{% static '' %}";
+    const PDFJS_VIEWER = "{% static 'ligninapp/pdfjs/web/viewer.html' %}";
+  </script>
 </head>
 
 <body>
@@ -46,15 +46,12 @@
   <ul>
     <li><b>Current Papers</b> is a list of papers currently in the review, as part of a grid. Double-click on custom columns to edit.</li>
     <li><b>Search</b> lets you add papers by name or keyword.</li>
-    <li><b>Snowball</b> lets you search papers using the papers you've already included in the dataset.
-      The search method is finding papers that have a lot of citations or references to the papers
-      in the dataset already, using the Semantic Scholar API.</li>
+    <li><b>Snowball</b> lets you search papers using the papers you've already included in the dataset.</li>
   </ul>
 
   <div>
     <h3>Current Papers</h3>
 
-    <!-- Toolbar with Upload button moved next to Edit -->
     <div class="toolbar">
       <a href="/column/add/?review={{ question_id }}">Create New Column</a>
       <span class="sep">|</span>
@@ -67,7 +64,6 @@
 
     <div id="paper-table-container">
       <div id="paper-table"></div>
-      <!-- (Removed the old bottom Upload button) -->
     </div>
   </div>
 
@@ -129,10 +125,54 @@
     </div>
   </div>
 
+  <!-- Paper Viewer + Replace Modal -->
+  <div id="paperModal" class="paper-modal" aria-modal="true" role="dialog">
+    <div class="wrap">
+      <header>
+        <h4 id="paperModalTitle">Paper</h4>
+        <button class="close-btn" type="button" onclick="closePaperModal()">×</button>
+      </header>
+      <div class="body">
+        <div class="left">
+          <!-- PDF.js viewer via iframe; filename banner will be visible -->
+          <iframe id="paperViewer" src=""></iframe>
+        </div>
+        <div class="right">
+          <h5>Replace file</h5>
+          <p class="muted">Upload a new PDF to replace the current one.</p>
+          <form id="paperReplaceForm" enctype="multipart/form-data">
+            {% csrf_token %}
+            <input type="hidden" id="paperModalPaperId" name="paper_id" />
+            <input type="file" id="paperModalNewFile" name="file" accept="application/pdf" required />
+            <div style="margin-top:10px">
+              <button type="submit">Replace</button>
+            </div>
+          </form>
+        </div>
+      </div>
+      <div class="footer">
+        <button type="button" onclick="closePaperModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Small helpers -->
   <script>
     function toggleUploadModal(show) {
       document.getElementById("uploadModal").style.display = show ? "block" : "none";
+    }
+    // Open/close viewer modal
+    function openPaperModal(fileUrl) {
+      const iframe = document.getElementById('paperViewer');
+      const encoded = encodeURIComponent(fileUrl);
+      iframe.src = `${PDFJS_VIEWER}?file=${encoded}`;
+      document.getElementById('paperModal').style.display = 'block';
+    }
+    function closePaperModal() {
+      const m = document.getElementById('paperModal');
+      const iframe = document.getElementById('paperViewer');
+      iframe.src = '';
+      m.style.display = 'none';
     }
   </script>
 
@@ -142,7 +182,7 @@
   </script>
   <script src="https://cdn.jsdelivr.net/npm/js-cookie@3.0.1/dist/js.cookie.min.js"></script>
   <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.3/jquery.min.js"></script>
-  <script type="text/javascript" src="https://unpkg.com/tabulator-tables@6.3.0/dist/js/tabulator.min.js"></script>
+  <script src="https://unpkg.com/tabulator-tables@6.3.0/dist/js/tabulator.min.js" type="text/javascript"></script>
   <script src="{% static 'ligninapp/main.js' %}"></script>
 </body>
 </html>
