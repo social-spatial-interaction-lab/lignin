@@ -171,21 +171,18 @@ body {
     display: inline !important;
   }
   
- /* Keep the toolbar on a single line */
 .toolbar {
     display: flex;
     align-items: center;
     gap: 12px;
-    flex-wrap: nowrap;     /* <- force one line */
+    flex-wrap: nowrap;     
     margin-bottom: 8px;
   }
   
-  /* Prevent button text from wrapping so they don’t grow taller */
   .toolbar button {
     white-space: nowrap;
   }
   
-  /* (Optional) allow wrapping only on very small screens */
   @media (max-width: 640px) {
     .toolbar { flex-wrap: wrap; }
   }

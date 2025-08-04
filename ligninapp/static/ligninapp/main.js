@@ -94,10 +94,8 @@ function openPaperModal({ id, url, name }) {
     // Title
     document.getElementById("paperModalTitle").textContent = name || "Paper";
   
-    // Make sure the file URL is absolute
     const absUrl = /^https?:\/\//i.test(url) ? url : `${window.location.origin}${url}`;
   
-    // Point to the viewer we copied into ligninapp/static/ligninapp/pdfjs/...
     const viewerUrl = `${STATIC_BASE}ligninapp/pdfjs/web/viewer.html?file=${encodeURIComponent(absUrl)}#zoom=page-width`;
   
     const viewer = document.getElementById("paperViewer");
