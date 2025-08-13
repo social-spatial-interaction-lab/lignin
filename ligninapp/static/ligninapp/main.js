@@ -1,155 +1,85 @@
 // === globals / setup ===
 const csrftoken = Cookies.get('csrftoken');
-window.__editMode = false;   // edit mode off by default
-let table;                   // Tabulator instance
+let table;
 
 const findResults = $("#find-results");
 const paperTable = $("#paper-table");
 const snowballResults = $("#snowball-results");
 
-// --- helpers ---
+// === NEW: Confirm & Generate handler ===
 function escapeHtml(s){
-  return String(s).replace(/[&<>"']/g, c => (
-    { "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]
+  return String(s).replace(/[&<>"]/g, c => (
+    { "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]
   ));
 }
 
-// === layout controls ===
-function toggleFullWidth() {
-  $("#paper-table-container").toggleClass("fullwidth");
-}
-
-// === add / reject from search & snowball ===
-function addPaper() {
-  let paperId = $(this).attr("data-lignin-paperId");
-  const thisButton = this;
-  $.ajax({
-    url: '/question/' + questionID + '/papers/add/' + paperId + '/',
-    headers: { 'X-CSRFToken': csrftoken },
-    type: 'PUT',
-    success: function() {
-      reloadPapers();
-      $(thisButton).closest('tr').remove();
-    }
-  });
-}
-
-function rejectPaper() {
-  let paperId = $(this).attr("data-lignin-paperId");
-  const thisButton = this;
-  $.ajax({
-    url: '/question/' + questionID + '/papers/reject/' + paperId + '/',
-    headers: { 'X-CSRFToken': csrftoken },
-    type: 'PUT',
-    success: function() {
-      $(thisButton).closest('tr').remove();
-    }
-  });
-}
-
-// === helpers used by search/snowball ===
-function stringOrFALN(keyname, entry) {
-  if (keyname === "authors") {
-    return entry["authors"].map(x => x.name).join(", ");
-  } else {
-    return entry[keyname];
-  }
-}
-function arrayToTable(array, additional, drop, columnIDs) {
-  const dataKeys = Object.keys(array.reduce(function(acc, curr) {
-    Object.keys(curr).forEach(x => acc[x] = true); return acc;
-  }, {})).filter(item => !drop.includes(item));
-  const additionalKeys = Array.from(Object.keys(additional));
-  const table = $("<table>");
-  table.append($("<tr>").append(
-    dataKeys.concat(additionalKeys).map(keyname => $("<th>").text(keyname))
-  ));
-  table.append(array.map(entry => $("<tr>")
-    .attr("data-lignin-paperId", entry["ssPaperID"] || entry["paperId"])
-    .append(
-      dataKeys.map(keyname => $("<td>")
-        .text(stringOrFALN(keyname, entry))
-        .attr("data-lignin-columnId", columnIDs[keyname]))
-      .concat(additionalKeys.map(keyname => additional[keyname](entry)))
-    )
-  ));
-  return table;
-}
-function titleAndLink(entry) {
-  return $("<td>").append($("<a>").text(entry["title"]).attr("href", entry["url"]).attr("target", "_blank"));
-}
-
-// === legacy replace file modal (kept for now) ===
-function triggerReplace(paperId) {
-  const modal = document.getElementById("replaceModal");
-  modal.style.display = "block";
-  document.getElementById("replacePaperId").value = paperId;
-}
-function closeReplaceModal() {
-  document.getElementById("replaceModal").style.display = "none";
-}
-
-// === new paper viewer + replace modal ===
-function openPaperModal({ id, url, name }) {
-    // Title
-    document.getElementById("paperModalTitle").textContent = name || "Paper";
-  
-    const absUrl = /^https?:\/\//i.test(url) ? url : `${window.location.origin}${url}`;
-  
-    const viewerUrl = `${STATIC_BASE}ligninapp/pdfjs/web/viewer.html?file=${encodeURIComponent(absUrl)}#zoom=page-width`;
-  
-    const viewer = document.getElementById("paperViewer");
-    viewer.src = viewerUrl;
-  
-    document.getElementById("paperModalPaperId").value = id || "";
-    document.getElementById("paperModal").style.display = "block";
-  }
-  
-  
-function closePaperModal() {
-  const modal = document.getElementById("paperModal");
-  const viewer = document.getElementById("paperViewer");
-  viewer.src = "about:blank";
-  modal.style.display = "none";
-}
-
-// === click-pencil helper: turn on Edit mode and edit this cell ===
-function enterEditModeAndEdit(cell) {
-  if (!window.__editMode) {
-    window.__editMode = true;
-    document.body.classList.toggle("edit-mode", true);
-    updateEditButtonUI();
-    applyEditMode();
-  }
-  cell.edit(true);
-}
-
-// === formatter that renders value + pencil button ===
-function editableCellFormatter(cell) {
-  const wrap = document.createElement("div");
-  wrap.className = "cell-edit-wrap";
-
-  const span = document.createElement("span");
-  const v = cell.getValue();
-  span.className = "cell-text";
-  span.textContent = (v === null || v === undefined) ? "" : String(v);
-
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "cell-edit-handle";
-  btn.title = "Edit";
-  btn.textContent = "✏️";
-  btn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    enterEditModeAndEdit(cell);
+document.getElementById('confirm-generate-btn')?.addEventListener('click', async function () {
+  const questions = [];
+  document.querySelectorAll('.question-text').forEach(el => {
+    questions.push(el.textContent.trim());
   });
 
-  wrap.appendChild(span);
-  wrap.appendChild(btn);
-  return wrap;
+  const pathParts = window.location.pathname.split('/');
+  const questionId = pathParts[pathParts.indexOf('question') + 1];
+
+  try {
+    const response = await fetch(`/question/${questionId}/generate_answers/`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": csrftoken
+      },
+      body: JSON.stringify({ questions: questions })
+    });
+
+    const data = await response.json();
+    console.log("Received answers:", data);
+    renderQATable(data.answers);
+  } catch (error) {
+    console.error("Error generating answers:", error);
+  }
+});
+
+function toggleModal(modalId, show) {
+  const modal = document.getElementById(modalId);
+  if (modal) {
+    modal.style.display = show ? 'block' : 'none';
+  }
 }
 
-// === table loader ===
+$(document).on('click', '#open-question-editor', function () {
+  toggleModal("question-editor-modal", true);
+});
+
+$(document).ready(() => {
+  const addBtn = document.getElementById("add-question-btn");
+  const inputBox = document.getElementById("new-question");
+  const questionList = document.getElementById("question-list");
+
+  if (addBtn && inputBox && questionList) {
+    addBtn.addEventListener("click", () => {
+      const questionText = inputBox.value.trim();
+      if (!questionText) return;
+
+      const questionEl = document.createElement("div");
+      questionEl.className = "question-entry";
+      questionEl.innerHTML = `
+        <span class="question-text">${questionText}</span>
+        <button class="delete-question-btn" style="margin-left: 10px;">❌</button>
+      `;
+
+      questionEl.querySelector(".delete-question-btn").addEventListener("click", () => {
+        questionList.removeChild(questionEl);
+      });
+
+      questionList.appendChild(questionEl);
+      inputBox.value = "";
+    });
+  }
+
+  reloadPapers();
+});
+
 function reloadPapers() {
   $.get('/question/' + questionID + '/papers/', {}, function(data) {
     if (table && typeof table.destroy === "function") {
@@ -166,10 +96,10 @@ function reloadPapers() {
       editTriggerEvent: "dblclick",
       persistence: { columns: ["width"] },
       columns: [
-        { title: "Title",  field: "title",  editor: false, formatter: editableCellFormatter },
-        { title: "Author", field: "author", editor: false, formatter: editableCellFormatter },
-        { title: "Year",   field: "year",   editor: false, editorParams:{ min:1800, max:2100, step:1 }, formatter: editableCellFormatter },
-        { title: "Notes",  field: "notes",  editor: false, formatter: editableCellFormatter },
+        { title: "Title", field: "title", editor: "input" },
+        { title: "Author", field: "author", editor: "input" },
+        { title: "Year", field: "year", editor: "number", editorParams: { min: 1800, max: 2100, step: 1 } },
+        { title: "Notes", field: "notes", editor: "textarea" },
         {
           title: "Paper(s)",
           field: "url",
@@ -183,15 +113,26 @@ function reloadPapers() {
                 try { return decodeURIComponent(u.split("/").pop().split("?")[0]); }
                 catch { return u; }
               })(url);
-
             const paperId = d.id.replace("upload-", "");
+            const abstract = d.abstract || d.notes || "";
+
             return `<a href="#" class="paper-link"
-                      data-id="${paperId}"
-                      data-url="${url}"
-                      data-name="${escapeHtml(name)}">${escapeHtml(name || "—")}</a>`;
+                        data-id="${paperId}"
+                        data-url="${url}"
+                        data-name="${escapeHtml(name)}"
+                        data-abstract="${escapeHtml(abstract)}">${escapeHtml(name || "—")}</a>`;
           },
           widthGrow: 2,
           hozAlign: "left",
+          cellClick: function(e, cell) {
+            const d = cell.getRow().getData();
+            openPaperModal({
+              id: d.id.replace("upload-", ""),
+              url: d.url,
+              name: d.paper_title || d.file_name || d.filename || d.original_filename,
+              abstract: d.abstract || d.notes || ""
+            });
+          }
         },
         {
           title: "Delete",
@@ -214,18 +155,9 @@ function reloadPapers() {
       ]
     });
 
-    // Block editing unless in Edit mode
-    table.on("cellEditing", function(){
-      if (!window.__editMode) return false;
-    });
-
-    // Persist edits only while in Edit mode
     table.on("cellEdited", function(cell) {
-      if (!window.__editMode) return;
-
       const rowData = cell.getRow().getData();
       const paperId = rowData.id.replace("upload-", "");
-
       fetch(`/papers/update/${paperId}/`, {
         method: "POST",
         headers: {
@@ -242,137 +174,139 @@ function reloadPapers() {
       .then(res => res.json())
       .then(data => { if (!data.success) alert("Update failed: " + data.error); });
     });
-
-    applyEditMode();
   }, 'json');
 }
 
-// === toggle editors on/off at the column level ===
-function applyEditMode() {
-  if (!table) return;
-  if (window.__editMode) {
-    table.updateColumnDefinition("title",  { editor: "input" });
-    table.updateColumnDefinition("author", { editor: "input" });
-    table.updateColumnDefinition("year",   { editor: "number", editorParams: { min: 1800, max: 2100, step: 1 } });
-    table.updateColumnDefinition("notes",  { editor: "textarea" });
-  } else {
-    table.updateColumnDefinition("title",  { editor: false });
-    table.updateColumnDefinition("author", { editor: false });
-    table.updateColumnDefinition("year",   { editor: false });
-    table.updateColumnDefinition("notes",  { editor: false });
+function renderQATable(answerList) {
+  const qaList = document.getElementById("qa-list");
+  if (!qaList) return;
+  qaList.innerHTML = "";
+  if (!answerList.length) {
+    qaList.innerHTML = "<p class='muted'>No answers generated.</p>";
+    return;
   }
-  table.redraw(true);
+  const table = document.createElement("table");
+  table.style.width = "100%";
+  table.style.borderCollapse = "collapse";
+  table.innerHTML = `
+    <thead>
+      <tr>
+        <th style="text-align: left; padding: 8px;">Question</th>
+        <th style="text-align: left; padding: 8px;">Answer</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${answerList.map(entry => `
+        <tr>
+          <td style="padding: 8px; vertical-align: top;">${entry.question}</td>
+          <td style="padding: 8px; vertical-align: top;">${entry.answer}</td>
+        </tr>
+      `).join('')}
+    </tbody>
+  `;
+  qaList.appendChild(table);
 }
 
-// === edit button UI ===
-function updateEditButtonUI() {
-  const btn = document.getElementById("toggle-edit");
-  if (!btn) return;
-  btn.textContent = window.__editMode ? "Done Editing" : "Edit";
-  btn.classList.toggle("btn-success", window.__editMode);
-  btn.classList.toggle("btn-outline-warning", !window.__editMode);
+function openPaperModal({ id, url, name, abstract = "" }) {
+  document.getElementById("paperModalTitle").textContent = name || "Paper";
+  document.getElementById("paperAbstract").textContent = abstract || "No abstract provided.";
+  const absUrl = /^https?:\/\//i.test(url) ? url : `${window.location.origin}${url}`;
+  const viewerUrl = `${STATIC_BASE}ligninapp/pdfjs/web/viewer.html?file=${encodeURIComponent(absUrl)}#zoom=page-width`;
+  const viewer = document.getElementById("paperViewer");
+  viewer.src = viewerUrl;
+  let input = document.getElementById("paperModalPaperId");
+  if (!input) {
+    input = document.createElement("input");
+    input.type = "hidden";
+    input.id = "paperModalPaperId";
+    document.getElementById("paperModal").appendChild(input);
+  }
+  input.value = id || "";
+  document.getElementById("paperModal").style.display = "block";
 }
 
-// === single DOMContentLoaded block ===
-document.addEventListener("DOMContentLoaded", () => {
-  // Legacy replace modal submit (kept for now)
-  const replaceForm = document.getElementById("replaceForm");
-  if (replaceForm) {
-    replaceForm.addEventListener("submit", function(e) {
-      e.preventDefault();
+function closePaperModal() {
+  const modal = document.getElementById("paperModal");
+  const viewer = document.getElementById("paperViewer");
+  viewer.src = "about:blank";
+  modal.style.display = "none";
+}
 
-      const paperId = document.getElementById("replacePaperId").value;
-      const fileInput = document.getElementById("newFile");
-      const formData = new FormData();
-      formData.append("file", fileInput.files[0]);
+function openNestedModal() {
+  document.getElementById("nested-edit-modal").style.display = "block";
+}
 
-      fetch(`/papers/replace/${paperId}/`, {
-        method: "POST",
-        headers: { "X-CSRFToken": csrftoken },
-        body: formData
-      })
-      .then(res => res.json())
-      .then(data => {
-        if (data.success) {
-          alert("File replaced successfully!");
-          closeReplaceModal();
-          reloadPapers();
-        } else {
-          alert("Replace failed: " + data.error);
-        }
-      });
-    });
+function closeNestedModal() {
+  document.getElementById("nested-edit-modal").style.display = "none";
+}
+
+function addQuestionInput() {
+  const container = document.getElementById("questions-container");
+  const div = document.createElement("div");
+  div.innerHTML = `<input type="text" placeholder="Enter question" class="question-input">
+                   <button onclick="this.parentElement.remove()">Remove</button>`;
+  container.appendChild(div);
+}
+
+let qaRendered = false;
+
+function confirmQuestions() {
+  const inputs = document.querySelectorAll('.question-input');
+  const questions = Array.from(inputs).map(i => i.value.trim()).filter(Boolean);
+  const container = document.getElementById("questions-container");
+
+  if (questions.length === 0) {
+    container.innerHTML = `<p style="color: red;">Please add at least one question.</p>`;
+    return;
   }
 
-  // New paper viewer modal: delegated click from table
-  const tableEl = document.getElementById("paper-table");
-  if (tableEl) {
-    tableEl.addEventListener("click", (e) => {
-      const a = e.target.closest("a.paper-link");
-      if (!a) return;
-      e.preventDefault();
-      openPaperModal({
-        id: a.dataset.id,
-        url: a.dataset.url,
-        name: a.dataset.name,
-      });
-    });
-  }
+  // Render inside modal
+  container.innerHTML = "";
+  const qaTable = document.createElement('div');
+  qaTable.style.border = '1px solid #ccc';
+  qaTable.style.borderRadius = '6px';
+  qaTable.style.padding = '10px';
+  qaTable.style.marginTop = '20px';
 
-  // Paper viewer modal: replace submit
-  const paperReplaceForm = document.getElementById("paperReplaceForm");
-  if (paperReplaceForm) {
-    paperReplaceForm.addEventListener("submit", function(e){
-      e.preventDefault();
-      const paperId = document.getElementById("paperModalPaperId").value;
-      const fileInput = document.getElementById("paperModalNewFile");
-      if (!paperId || !fileInput.files.length) return;
-
-      const formData = new FormData();
-      formData.append("file", fileInput.files[0]);
-
-      fetch(`/papers/replace/${paperId}/`, {
-        method: "POST",
-        headers: { "X-CSRFToken": csrftoken },
-        body: formData
-      })
-      .then(res => res.json())
-      .then(data => {
-        if (data.success) {
-          alert("File replaced successfully!");
-          closePaperModal();
-          reloadPapers();
-        } else {
-          alert("Replace failed: " + data.error);
-        }
-      });
-    });
-  }
-
-  // Close paper modal on ESC or backdrop click
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") closePaperModal();
+  questions.forEach((q, idx) => {
+    const qaRow = document.createElement('div');
+    qaRow.style.marginBottom = '10px';
+    qaRow.innerHTML = `<strong>Q${idx + 1}:</strong> ${q}<br><strong>A:</strong> [Answer will go here]`;
+    qaTable.appendChild(qaRow);
   });
-  const paperModal = document.getElementById("paperModal");
-  if (paperModal) {
-    paperModal.addEventListener("click", (e) => {
-      if (e.target === paperModal) closePaperModal();
-    });
-  }
 
-  // Edit toggle
-  const btn = document.getElementById("toggle-edit");
-  if (btn) {
-    btn.addEventListener("click", () => {
-      window.__editMode = !window.__editMode;
-      document.body.classList.toggle("edit-mode", window.__editMode);
-      updateEditButtonUI();
-      applyEditMode();
-    });
-    document.body.classList.toggle("edit-mode", window.__editMode);
-    updateEditButtonUI();
-  }
+  container.appendChild(qaTable);
 
-  // Load table
-  reloadPapers();
+  const qaList = document.getElementById("qa-list");
+if (qaList) {
+  qaList.innerHTML = "";
+
+  const table = document.createElement("table");
+  table.style.width = "100%";
+  table.style.borderCollapse = "collapse";
+  table.innerHTML = `
+    <thead>
+      <tr>
+        <th style="text-align: left; padding: 8px;">Question</th>
+        <th style="text-align: left; padding: 8px;">Answer</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${questions.map((q, idx) => `
+        <tr>
+          <td style="padding: 8px;">Q${idx + 1}: ${q}</td>
+          <td style="padding: 8px;">[Answer will go here]</td>
+        </tr>
+      `).join("")}
+    </tbody>
+  `;
+  qaList.appendChild(table);
+}
+}
+
+// Delegate click event for dynamically inserted #edit-btn
+document.addEventListener("click", function (e) {
+  if (e.target && e.target.id === "edit-btn") {
+    openNestedModal();
+  }
 });
