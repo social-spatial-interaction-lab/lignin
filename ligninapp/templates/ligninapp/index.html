@@ -3,9 +3,55 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Title</title>
+    <title>Lignin</title>
     <link rel="stylesheet" href="{% static 'ligninapp/simple-v1.min.css' %}">
     <link rel="stylesheet" href="{% static 'ligninapp/style.css' %}">
+    <style>
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100vw; height: 100vh;
+            background-color: rgba(0, 0, 0, 0.5);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .modal-content {
+            background: white;
+            padding: 2rem;
+            border-radius: 10px;
+            width: 400px;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
+            text-align: center;
+        }
+
+        .modal-content input[type="text"] {
+            width: 100%;
+            padding: 0.5rem;
+            font-size: 1rem;
+            margin: 1rem 0;
+        }
+
+        .cancel-btn {
+            margin-right: 10px;
+            background-color: #ccc;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        .submit-btn {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+    </style>
 </head>
 <body>
 
@@ -20,21 +66,40 @@
 {% endfor %}
 </ul>
 
-<p>Or, make <a href="question/add/">a new review</a>.
-    {% if not user.is_authenticated %}
-    To do so, you must <a href="accounts/register/">register</a> or <a href="admin/login/?next=/">log in</a> first.
+<!--  Create Review Button -->
+<p>
+    Or, make 
+    {% if user.is_authenticated %}
+        <button id="openModalBtn" class="submit-btn">a new review</button>
+    {% else %}
+        <a href="accounts/register/">register</a> or 
+        <a href="admin/login/?next=/">log in</a> first to create a new review.
     {% endif %}
 </p>
 
+<!--  Modal Form -->
+<div id="modalOverlay" class="modal-overlay">
+    <div class="modal-content">
+      <h2>Create New Review</h2>
+      <input type="text" id="reviewTitleInput" placeholder="Enter review title">
+      <div class="button-row">
+        <button class="btn cancel cancel-btn" id="closeModalBtn">Cancel</button>
+        <button class="btn create submit-btn" id="createBtn">Create Review</button>
+      </div>
+    </div>
+  </div>
+  
+
+
+<!-- Info -->
 <p>
     Emboldened by <a href="https://cscroucher.shinyapps.io/LoCoMoTeDashboard/">Charlotte Croucher's PhD thesis "LoCoMoTe Dashboard",</a>
     I <a href="markromanmiller.com">(Mark)</a> hacked together a couple more features on an earlier prototype of this lit review tool. I hope you enjoy it!
 </p>
 
-<p>Currently, everthing is public, but features will be added soon. You can contribute - email me if you're interested at mmiller30 at iit dot edu.</p>
+<p>Currently, everything is public, but features will be added soon. You can contribute - email me if you're interested at mmiller30 at iit dot edu.</p>
 
 <h3>Pitch (Informal)</h3>
-
 <p>
     Literature reviews are great, but they show the literature at one point in time. It doesn't need to be static anymore,
     because we have alternative publishing methods now. So, why don't we pool all the informal, ad-hoc spreadsheets
@@ -54,5 +119,35 @@
     assert or correct these same ideas.
 </p>
 
-</body>
-</html>
+<!-- JavaScript -->
+
+<script>
+    const modal = document.getElementById("modalOverlay");
+    const openBtn = document.getElementById("openModalBtn");
+    const closeBtn = document.getElementById("closeModalBtn");
+    const createBtn = document.getElementById("createBtn");
+    const titleInput = document.getElementById("reviewTitleInput");
+  
+    openBtn.addEventListener("click", function (e) {
+      e.preventDefault();
+      modal.style.display = "flex";
+    });
+  
+    closeBtn.addEventListener("click", function () {
+      modal.style.display = "none";
+    });
+  
+    createBtn.addEventListener("click", function () {
+      const title = encodeURIComponent(titleInput.value.trim());
+      if (title) {
+        window.location.href = `/question/add/?title=${title}`;
+      }
+    });
+  
+    window.addEventListener("click", function (e) {
+      if (e.target === modal) {
+        modal.style.display = "none";
+      }
+    });
+  </script>
+  

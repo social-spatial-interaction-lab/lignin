@@ -1,0 +1,22 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Create Review</title>
+    <link rel="stylesheet" href="{% static 'ligninapp/style.css' %}">
+</head>
+<body>
+    <div class="modal-box">
+        <h2>Review Title</h2>
+        <form method="post" enctype="multipart/form-data">
+            {% csrf_token %}
+            {{ review_form.question_text }}
+            <div class="button-row">
+                <a href="/" class="btn cancel">Cancel</a>
+                <button type="submit" class="btn create">Create Review</button>
+            </div>
+        </form>
+    </div>
+</body>
+</html>

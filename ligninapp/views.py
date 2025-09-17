@@ -1,21 +1,31 @@
 import json
+import logging
 
 from django import forms
-from django.shortcuts import render, get_object_or_404
+from django.shortcuts import render, redirect, get_object_or_404
 from django.http import HttpResponse, JsonResponse, HttpResponseRedirect
 from django.core import serializers
 from rules.contrib.views import PermissionRequiredMixin
-
 from .models import Paper, Review, Value, Column, LigninUser, Entry
 from collections import defaultdict
 import requests
 from rules import has_perm
 from django.views.generic.edit import CreateView, UpdateView, DeleteView
+from .forms import UploadedPaperForm, ReviewForm
+from django.views.decorators.http import require_POST
+from django.urls import reverse
+from django.shortcuts import redirect
+from .models import UploadedPaper
+from django.views.decorators.http import require_http_methods
+from django.contrib.auth.forms import UserCreationForm
+
+from .LLM_response import LLM_entrance
 
 import environ
 env = environ.Env()
 environ.Env.read_env()
 
+logger = logging.getLogger(__name__)
 
 def index(request):
     pks = [i.pk for i in Review.objects.all() if has_perm('ligninapp.view_review', request.user, i)]
@@ -37,6 +47,13 @@ class ReviewCreate(PermissionRequiredMixin, CreateView):
     model = Review
     fields = ['question_text', 'default_permission']
     permission_required = 'ligninapp.add_review'
+
+    def get_initial(self):
+        initial = super().get_initial()
+        if 'title' in self.request.GET:
+            initial['question_text'] = self.request.GET['title']
+        return initial
+
 
 
 class NewColumnForm(forms.Form):
@@ -112,76 +129,36 @@ def add_paper(request, question_id, paper_id):
 
     return HttpResponse(status=201)
 
-
+    
 def get_papers(request, question_id):
-    question = get_object_or_404(Review, id=question_id)
+    uploads = UploadedPaper.objects.filter(review_id=question_id)
 
-    # get columns for that question.
-    columns = question.columns.all()
-    paper_fields = ['year', 'faln'] # 'ssPaperID',
+    upload_data = []
+    for upload in uploads:
+        upload_data.append({
+            "id": f"upload-{upload.id}",
+            "source": "upload",
+            "title": upload.title,
+            "author": upload.author or "",
+            "year": upload.year or "",
+            "url": upload.file.url,
+            "notes": f"Uploaded on {upload.uploaded_at.strftime('%Y-%m-%d %H:%M')}",
+        })
 
-    # loop through the serialized files and pull relevant info
-    result = []
-    for subpaper in question.entries.all(): # these are objects, one by one.
-        paper = subpaper.paper
-        # extract the basics (year, faln, etc)
-        paper_json = json.loads(serializers.serialize(
-            'json',
-            Paper.objects.filter(pk=paper.pk),
-            fields=paper_fields))
+    response_data = {
+        "data": upload_data,
+        "metadata": [
+            {"title": "Title", "field": "title"},
+            {"title": "Author", "field": "author"},
+            {"title": "Year", "field": "year"},
+            {"title": "Notes", "field": "notes"},
+            {"title": "URL", "field": "url"},
+        ]
+    }
 
-        paper_info = paper_json[0]["fields"]  # there's guaranteed to be one and only one.
-        paper_info["title"] = paper.title
-        paper_info["link"] = paper.url
-        paper_info["description"] = subpaper.description
-        paper_info["id"] = subpaper.id
-        for column in columns:
-            descriptions = Value.objects.filter(column=column, entry=subpaper)
-            paper_info[column.name] = descriptions[0].value if descriptions else ""
+    return JsonResponse(response_data)
 
-        result.append(paper_info)
-        #
 
-    column_mds = [
-        {"title": "Title", "field": "title", "formatter": "textarea"},
-        {"title": "Link", "field": "link", "formatter": "link", "formatterParams": {
-            "label": "@",
-            "target": "_blank"
-        }}
-    ]
-
-    for title in paper_fields: #["description", "id"]:
-        column_md = {}
-        column_md["title"] = title
-        column_md["field"] = title
-        column_mds.append(column_md)
-
-    for column in columns:
-        column_md = {}
-        column_md["title"] = column.name
-        column_md["field"] = column.name
-        column_md["editor"] = True
-        column_md["column_id"] = column.id
-        column_md["formatter"] = "textarea"
-        column_md["headerPopupIcon"] = "&#128712;"
-        if column.column_info:
-            column_md["headerPopup"] = column.column_info.replace("\n", "<br />\n")
-        column_mds.append(column_md)
-
-    # add IDs
-
-    # rectangle:
-    # {id: f..
-    #  	{id:4, name:"Brendon Philips", age:"125", col:"orange", dob:"01/08/1980"},
-    #  	{id:5, name:"Margret Marmaduke", age:"16", col:"yellow", dob:"31/01/1999"},
-    # "column_metadata: [
-    # 	 	{title:"Favourite Color", field:"col"},
-    # 	 	{title:"Date Of Birth", field:"dob", sorter:"date", hozAlign:"center"},
-    # 	 	]
-    return JsonResponse({
-        "data": result,
-        "metadata": column_mds
-    })
 
 
 def edit_annotation(request, entry_id, column_pk):
@@ -254,3 +231,147 @@ def get_snowball(request, question_id):
 
     return JsonResponse({"data": sorted([i for i in response if i], key=lambda x: x["occurrence_number"], reverse=True)})
 
+def upload_paper(request):
+    if request.method == 'POST':
+        form = UploadedPaperForm(request.POST, request.FILES)
+        if form.is_valid():
+            form.save()
+            return HttpResponseRedirect('/')  # adjust redirect as needed
+    else:
+        form = UploadedPaperForm()
+    return render(request, 'ligninapp/upload_paper.html', {'form': form})
+
+
+def create_review(request):
+    title = request.GET.get("title", "").strip()
+    if title:
+        review = Review.objects.create(question_text=title, default_permission='MOD')
+    return redirect("question", question_id=review.id)
+    return redirect("index")  # fallback if title is empty
+
+@require_POST
+
+def save_review_title(request):
+    title = request.POST.get("title", "").strip()
+    if not title:
+        return JsonResponse({"error": "Missing title"}, status=400)
+
+    review = Review.objects.create(
+        question_text=title,
+        default_permission="VIEW",
+    )
+
+    return JsonResponse({"redirect_url": reverse("add-columns-papers", args=[review.id])})
+
+def add_columns_papers(request, review_id):
+    review = get_object_or_404(Review, pk=review_id)
+    return render(request, "ligninapp/add_columns_papers.html", {"review": review})
+
+def upload_paper(request, question_id):
+    review = get_object_or_404(Review, id=question_id)
+
+    if request.method == 'POST':
+        title = request.POST.get('title')
+        author = request.POST.get('author', '')
+        year = request.POST.get('year') or None
+        file = request.FILES.get('file')
+
+        UploadedPaper.objects.create(
+            review=review,
+            title=title,
+            author=author,
+            year=year if year else None,
+            file=file
+        )
+
+    return redirect('question', question_id)
+
+@require_http_methods(["DELETE"])
+def delete_uploaded_paper(request, paper_id):
+    try:
+        paper = UploadedPaper.objects.get(pk=paper_id)
+        paper.delete()
+        return JsonResponse({'success': True})
+    except UploadedPaper.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'Paper not found'}, status=404)
+
+
+@require_http_methods(["POST"])
+def update_uploaded_paper(request, paper_id):
+    try:
+        paper = UploadedPaper.objects.get(pk=paper_id)
+        data = json.loads(request.body)
+
+        paper.title = data.get("title", paper.title)
+        paper.author = data.get("author", paper.author)
+        paper.year = data.get("year", paper.year)
+        paper.save()
+
+        return JsonResponse({'success': True})
+    except UploadedPaper.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'Paper not found'}, status=404)
+
+@require_http_methods(["POST"])
+def replace_uploaded_paper(request, paper_id):
+    try:
+        paper = UploadedPaper.objects.get(pk=paper_id)
+        new_file = request.FILES.get("file")
+        if not new_file:
+            return JsonResponse({"success": False, "error": "No file uploaded"})
+
+        paper.file = new_file
+        paper.save()
+
+        return JsonResponse({"success": True})
+    except UploadedPaper.DoesNotExist:
+        return JsonResponse({"success": False, "error": "Paper not found"}, status=404)
+    
+def register(request):
+    if request.method == "POST":
+        form = UserCreationForm(request.POST)
+        if form.is_valid():
+            form.save()
+            return redirect('login')  # 来自 django.contrib.auth.urls
+    else:
+        form = UserCreationForm()
+    return render(request, 'registration/register.html', {'form': form})
+
+@require_http_methods(["POST"])
+def generate_request_accept_view(request, question_id):
+    try:
+        # 1) Parse frontend JSON
+        payload = json.loads(request.body.decode("utf-8"))
+        columns_obj = payload.get("columns", {})
+        urls_obj = payload.get("urls", {})
+
+        # 2) Call custom module (synchronously wait for result string)
+        llm_text = LLM_entrance(columns_obj, urls_obj)
+        if not isinstance(llm_text, str):
+            llm_text = str(llm_text)
+
+        # 3) Print to backend console (for debugging/auditing)
+        print("=== generate_request_accept_view received ===")
+        print("columns_obj:", json.dumps(columns_obj, indent=2, ensure_ascii=False))
+        print("urls_obj:", json.dumps(urls_obj, indent=2, ensure_ascii=False))
+        print("LLM_response:", llm_text)
+        print("============================================")
+        logger.info("LLM_response: %s", llm_text)
+
+        # 4) Send back to frontend
+        #    - llm_text: business string result
+        #    - console_script: frontend can directly eval/Function/insert <script> to execute, so that it prints in browser console
+        #      (Recommended approach: frontend receives llm_text and then does console.log(data.llm_text) itself)
+        return JsonResponse({
+            "ok": True,
+            "columns": columns_obj,
+            "urls": urls_obj,
+            "llm_text": llm_text,
+            "console_script": f"console.log({json.dumps(llm_text)});"
+        }, status=200)
+
+    except Exception as e:
+        logger.exception("generate_request_accept_view failed")
+        return JsonResponse({
+            "ok": False,
+            "error": str(e),
+        }, status=400)
