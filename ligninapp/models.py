@@ -111,3 +111,30 @@ class Value(RulesModel):
 
     def __str__(self):
         return f"{self.column} for {self.entry}: {self.value}"
+    
+class UploadedPaper(RulesModel):
+    review = models.ForeignKey(Review, on_delete=models.CASCADE, related_name="uploaded_papers")
+    title = models.CharField(max_length=255)
+    author = models.CharField(max_length=255, blank=True)
+    year = models.IntegerField(null=True, blank=True)
+    file = models.FileField(upload_to='uploaded_papers/')
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    notes = models.TextField(blank=True, null=True)
+
+    # Optional metadata
+    doi = models.CharField(max_length=100, blank=True, null=True)
+    citation_text = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return self.title
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "title": self.title,
+            "author": self.author,
+            "year": self.year,
+            "file_url": self.file.url if self.file else "",
+            "uploaded_at": self.uploaded_at.strftime("%Y-%m-%d %H:%M"),
+            "notes": self.notes or ""
+        }
