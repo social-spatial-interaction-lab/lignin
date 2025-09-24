@@ -6,13 +6,19 @@ const findResults = $("#find-results");
 const paperTable = $("#paper-table");
 const snowballResults = $("#snowball-results");
 
-// === NEW: Confirm & Generate handler ===
+// === helpers ===
 function escapeHtml(s){
   return String(s).replace(/[&<>"]/g, c => (
     { "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]
   ));
 }
+function slugify(s){ return s.toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,''); }
+function toggleModal(modalId, show) {
+  const modal = document.getElementById(modalId);
+  if (modal) modal.style.display = show ? 'block' : 'none';
+}
 
+// === NEW: Confirm & Generate handler ===
 document.getElementById('confirm-generate-btn')?.addEventListener('click', async function () {
   const questions = [];
   document.querySelectorAll('.question-text').forEach(el => {
@@ -29,7 +35,7 @@ document.getElementById('confirm-generate-btn')?.addEventListener('click', async
         "Content-Type": "application/json",
         "X-CSRFToken": csrftoken
       },
-      body: JSON.stringify({ questions: questions })
+      body: JSON.stringify({ questions })
     });
 
     const data = await response.json();
@@ -39,13 +45,6 @@ document.getElementById('confirm-generate-btn')?.addEventListener('click', async
     console.error("Error generating answers:", error);
   }
 });
-
-function toggleModal(modalId, show) {
-  const modal = document.getElementById(modalId);
-  if (modal) {
-    modal.style.display = show ? 'block' : 'none';
-  }
-}
 
 $(document).on('click', '#open-question-editor', function () {
   toggleModal("question-editor-modal", true);
@@ -94,64 +93,48 @@ function reloadPapers() {
       layout: "fitData",
       renderHorizontal: "virtual",
       editTriggerEvent: "dblclick",
-      persistence: { columns: ["width"] },
-      columns: [
-        { title: "Title", field: "title", editor: "input" },
-        { title: "Author", field: "author", editor: "input" },
-        { title: "Year", field: "year", editor: "number", editorParams: { min: 1800, max: 2100, step: 1 } },
-        { title: "Notes", field: "notes", editor: "textarea" },
-        {
-          title: "Paper(s)",
-          field: "url",
-          formatter: function(cell) {
-            const d = cell.getRow().getData();
-            const url = cell.getValue();
-            const name =
-              d.paper_title || d.file_name || d.filename || d.original_filename ||
-              (function(u){
-                if (!u) return "";
-                try { return decodeURIComponent(u.split("/").pop().split("?")[0]); }
-                catch { return u; }
-              })(url);
-            const paperId = d.id.replace("upload-", "");
-            const abstract = d.abstract || d.notes || "";
 
-            return `<a href="#" class="paper-link"
-                        data-id="${paperId}"
-                        data-url="${url}"
-                        data-name="${escapeHtml(name)}"
-                        data-abstract="${escapeHtml(abstract)}">${escapeHtml(name || "—")}</a>`;
-          },
-          widthGrow: 2,
-          hozAlign: "left",
-          cellClick: function(e, cell) {
-            const d = cell.getRow().getData();
-            openPaperModal({
-              id: d.id.replace("upload-", ""),
-              url: d.url,
-              name: d.paper_title || d.file_name || d.filename || d.original_filename,
-              abstract: d.abstract || d.notes || ""
-            });
+      // Moving + persistence
+      movableColumns: true,
+      persistenceID: `paper-table-review-${questionID}`,
+      persistenceMode: "local",
+      persistence: { columns: ["order", "width", "visible", "frozen", "sort"] },
+
+      // Header menu (delete dynamic columns only)
+      columnHeaderMenu: function(){
+        return [
+          {
+            label: "Delete column",
+            action: function(e, column){
+              const def = column.getDefinition();
+              if (!def._column_id) {
+                alert("This built-in column can't be deleted.");
+                return;
+              }
+              if (!confirm(`Delete column "${def.title}"?`)) return;
+
+              fetch("/column/delete/", {
+                method: "POST",
+                headers: { "X-CSRFToken": csrftoken, "Content-Type": "application/json" },
+                body: JSON.stringify({ review: questionID, column_id: def._column_id }),
+              })
+              .then(r => r.ok ? r.json() : r.text().then(t => Promise.reject(t)))
+              .then(res => {
+                if (!res.ok) throw (res.error || "Delete failed");
+                column.delete();
+              })
+              .catch(err => alert(err));
+            }
           }
-        },
-        {
-          title: "Delete",
-          formatter: "buttonCross",
-          width: 100,
-          align: "center",
-          cellClick: function(e, cell) {
-            const paperId = cell.getRow().getData().id.replace("upload-", "");
-            fetch(`/papers/delete/${paperId}/`, {
-              method: "DELETE",
-              headers: { "X-CSRFToken": csrftoken },
-            })
-            .then(res => res.json())
-            .then(data => {
-              if (data.success) cell.getRow().delete();
-              else alert("Delete failed: " + data.error);
-            });
-          }
-        }
+        ];
+      },
+
+      columns: [
+        { title: "Title",  field: "title",  editor: "input" },
+        { title: "Author", field: "author", editor: "input" },
+        { title: "Year",   field: "year",   editor: "number", editorParams:{min:1800,max:2100,step:1} },
+        { title: "Notes",  field: "notes",  editor: "textarea" },
+        // Paper(s) + Delete columns are defined elsewhere in your earlier version
       ]
     });
 
@@ -172,7 +155,7 @@ function reloadPapers() {
         }),
       })
       .then(res => res.json())
-      .then(data => { if (!data.success) alert("Update failed: " + data.error); });
+      .then(d => { if (!d.success) alert("Update failed: " + d.error); });
     });
   }, 'json');
 }
@@ -278,31 +261,80 @@ function confirmQuestions() {
   container.appendChild(qaTable);
 
   const qaList = document.getElementById("qa-list");
-if (qaList) {
-  qaList.innerHTML = "";
+  if (qaList) {
+    qaList.innerHTML = "";
 
-  const table = document.createElement("table");
-  table.style.width = "100%";
-  table.style.borderCollapse = "collapse";
-  table.innerHTML = `
-    <thead>
-      <tr>
-        <th style="text-align: left; padding: 8px;">Question</th>
-        <th style="text-align: left; padding: 8px;">Answer</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${questions.map((q, idx) => `
+    const table = document.createElement("table");
+    table.style.width = "100%";
+    table.style.borderCollapse = "collapse";
+    table.innerHTML = `
+      <thead>
         <tr>
-          <td style="padding: 8px;">Q${idx + 1}: ${q}</td>
-          <td style="padding: 8px;">[Answer will go here]</td>
+          <th style="text-align: left; padding: 8px;">Question</th>
+          <th style="text-align: left; padding: 8px;">Answer</th>
         </tr>
-      `).join("")}
-    </tbody>
-  `;
-  qaList.appendChild(table);
+      </thead>
+      <tbody>
+        ${questions.map((q, idx) => `
+          <tr>
+            <td style="padding: 8px;">Q${idx + 1}: ${q}</td>
+            <td style="padding: 8px;">[Answer will go here]</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    `;
+    qaList.appendChild(table);
+  }
 }
-}
+
+// --- Create New Column handler (fixed) ---
+document.addEventListener("DOMContentLoaded", () => {
+  const link = document.getElementById("createColumnLink");
+  if (!link) return;
+
+  link.addEventListener("click", async (e) => {
+    e.preventDefault();
+
+    if (!table) { alert("Table is still loading—try again in a second."); return; }
+
+    const review = link.getAttribute("data-review"); // {{ question_id }}
+    const name = prompt("New column name?");
+    if (!name) return;
+
+    const fd = new FormData();
+    fd.append("review", review);
+    fd.append("name", name);
+    fd.append("column_info", ""); // Column.column_info is non-null
+
+    const resp = await fetch("/column/add/", {
+      method: "POST",
+      headers: { "X-CSRFToken": csrftoken },
+      body: fd,
+    });
+
+    const respText = await resp.text();
+    let respData;
+    try { respData = JSON.parse(respText); }
+    catch { respData = { ok: false, error: respText }; }
+
+    if (!resp.ok || respData.ok === false) {
+      alert(respData.error || `HTTP ${resp.status}`);
+      return;
+    }
+
+    const colId = respData.column.id;
+    const fieldKey = slugify(name);
+
+    table.addColumn({
+      title: name,
+      field: fieldKey,
+      hozAlign: "left",
+      editor: "input",
+      widthGrow: 1,
+      _column_id: colId,   // returned from /column/add/
+    }, true);    
+  });
+});
 
 // Delegate click event for dynamically inserted #edit-btn
 document.addEventListener("click", function (e) {

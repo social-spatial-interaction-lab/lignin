@@ -1,23 +1,31 @@
 import json
-from django import forms
-from django.shortcuts import render, redirect, get_object_or_404
-from django.http import HttpResponse, JsonResponse, HttpResponseRedirect
-from django.core import serializers
-from rules.contrib.views import PermissionRequiredMixin
-from .models import Paper, Review, Value, Column, LigninUser, Entry
 from collections import defaultdict
 import requests
 from rules import has_perm
-from django.views.generic.edit import CreateView, UpdateView, DeleteView
-from .forms import UploadedPaperForm, ReviewForm
-from django.views.decorators.http import require_POST
+from rules.contrib.views import PermissionRequiredMixin
+from django import forms
+from django.core import serializers
+from django.http import (
+    HttpResponse,
+    HttpResponseBadRequest,
+    HttpResponseRedirect,
+    JsonResponse,
+)
+from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
-from django.shortcuts import redirect
-from .models import UploadedPaper
-from django.views.decorators.http import require_http_methods
-
-
-
+from django.utils.datastructures import MultiValueDictKeyError
+from django.views.decorators.http import require_http_methods, require_POST
+from django.views.generic.edit import CreateView, DeleteView, UpdateView
+from .forms import ReviewForm, UploadedPaperForm
+from .models import (
+    Column,
+    Entry,
+    LigninUser,
+    Paper,
+    Review,
+    UploadedPaper,
+    Value,
+)
 import environ
 env = environ.Env()
 environ.Env.read_env()
@@ -56,33 +64,49 @@ class NewColumnForm(forms.Form):
     name = forms.CharField(max_length=200)
     review_to_add_to = forms.IntegerField(widget = forms.HiddenInput(), required = False)
 
-
+@require_POST
 def create_column(request):
-    # if this is a POST request we need to process the form data
-    if request.method == "POST":
-        # create a form instance and populate it with data from the request:
-        form = NewColumnForm(request.POST)
-        # check whether it's valid:
-        if form.is_valid():
-            # process the data in form.cleaned_data as required
+    review_id = request.POST.get("review") or request.POST.get("review_id") or request.POST.get("question_id")
+    name = (request.POST.get("name") or "").strip()
+    column_info = (request.POST.get("column_info") or "").strip()  # non-null field
 
-            # Create the new column
-            col = Column.objects.create(name=form.cleaned_data['name'])
-            col.save()
-            # add the column to the review
-            review = Review.objects.get(pk=form.cleaned_data['review_to_add_to'])
-            review.columns.add(col)
-            review.save()
+    if not review_id or not name:
+        return HttpResponseBadRequest("Missing review/question id or name")
 
-            # redirect to the review
-            return HttpResponseRedirect(review.get_absolute_url())
+    review = get_object_or_404(Review, pk=review_id)
 
-    # if a GET (or any other method) we'll create a blank form
-    else:
-        form = NewColumnForm(initial={"review_to_add_to": int(request.GET['review'])})
+    col = Column.objects.create(name=name, column_info=column_info)
+    review.columns.add(col)  # M2M attach
 
-    return render(request, "ligninapp/column_form.html", {"form": form})
+    return JsonResponse({"ok": True, "column": {"id": col.id, "name": col.name}})
 
+
+def delete_column(request):
+    # accept JSON or FormData
+    try:
+        if request.content_type and "application/json" in request.content_type:
+            data = json.loads(request.body.decode("utf-8"))
+        else:
+            data = request.POST
+
+        review_id = data.get("review")
+        column_id = data.get("column_id")
+        if not review_id or not column_id:
+            return HttpResponseBadRequest("Missing review or column_id")
+
+        review = get_object_or_404(Review, pk=review_id)
+        column = get_object_or_404(Column, pk=column_id)
+
+        # detach from review
+        review.columns.remove(column)
+
+        # optionally delete the Column object entirely
+        # (safe if your Columns are unique-per-review as your create flow suggests)
+        column.delete()
+
+        return JsonResponse({"ok": True})
+    except Exception as e:
+        return HttpResponseBadRequest(str(e))
 
 def add_paper(request, question_id, paper_id):
     # check if the paper exists.
@@ -321,3 +345,4 @@ def replace_uploaded_paper(request, paper_id):
         return JsonResponse({"success": True})
     except UploadedPaper.DoesNotExist:
         return JsonResponse({"success": False, "error": "Paper not found"}, status=404)
+
