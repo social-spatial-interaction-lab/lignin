@@ -94,3 +94,7 @@ db.sqlite3
 # venv
 /venv/
 .venv/
+
+# Allow pdfjs build folder
+!ligninapp/static/ligninapp/pdfjs/build/
+!ligninapp/static/ligninapp/pdfjs/build/**
