@@ -18,11 +18,30 @@
     .close { color:#aaa; float:right; font-size:28px; font-weight:bold; cursor:pointer; }
 
     /* Paper viewer modal */
-    .paper-modal { display:none; position:fixed; inset:0; z-index:1000; background:rgba(0,0,0,.6); }
-    .paper-modal .wrap { background:#fff; width:90%; height:85vh; margin:4vh auto; border-radius:8px; display:flex; flex-direction:row; padding: 20px; gap: 24px; align-items: flex-start; overflow: hidden; }
-    .paper-modal .footer { padding:10px 0; text-align:right; }
-    .paper-modal .close-btn { background:transparent; border:0; font-size:22px; cursor:pointer; }
-    .paper-modal .muted { color:#666; font-size:.9rem; }
+    /* Paper viewer modal */
+  .paper-modal { 
+    display: none; 
+    position: fixed; 
+    inset: 0; 
+    z-index: 1000; 
+    background: rgba(0,0,0,.6);
+  }
+
+  /* Change this section to a full-screen container */
+  .paper-modal .wrap {
+    background: #fff;
+    width: 100vw;          /* Viewport width */
+    height: 100vh;         /* Viewport height */
+    margin: 0;             /* Remove centered margins */
+    border-radius: 0;      /* Remove border radius, make it flush with edges */
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;  /* Stretch both side columns to equal height */
+    gap: 24px;
+    padding: 16px;
+    box-sizing: border-box;
+    overflow: hidden;      /* Delegate internal scrolling to child elements */
+  }
   </style>
 
   <script>
@@ -80,25 +99,20 @@
     <div id="snowball-results"></div>
   </div>
 
-  <!-- Upload Modal -->
-  <div id="uploadModal" class="modal">
-    <div class="modal-content">
-      <span class="close" onclick="toggleUploadModal(false)">&times;</span>
-      <form method="POST" enctype="multipart/form-data" action="{% url 'upload-paper' question_id=question.id %}">
-        {% csrf_token %}
-        <label>Title:</label><br>
-        <input type="text" name="title" required><br><br>
-        <label>Author:</label><br>
-        <input type="text" name="author"><br><br>
-        <label>Year:</label><br>
-        <input type="number" name="year" min="0" max="9999"><br><br>
-        <label>PDF File:</label><br>
-        <input type="file" name="file" required><br><br>
-        <button type="submit">Upload</button>
-        <button type="button" onclick="toggleUploadModal(false)">Cancel</button>
-      </form>
-    </div>
+  <!-- Upload Modal (EAV: file-only) -->
+<div id="uploadModal" class="modal">
+  <div class="modal-content">
+    <span class="close" onclick="toggleUploadModal(false)">&times;</span>
+    <form method="POST" enctype="multipart/form-data" action="{% url 'upload-paper' question_id=question.id %}">
+      {% csrf_token %}
+      <label>PDF File:</label><br>
+      <input type="file" name="file" accept="application/pdf" required><br><br>
+      <button type="submit">Upload</button>
+      <button type="button" onclick="toggleUploadModal(false)">Cancel</button>
+    </form>
   </div>
+</div>
+
 
   <!-- Replace Modal -->
   <div id="replaceModal" class="modal">
@@ -152,22 +166,22 @@
 
   <script>
 
-    // ——稳健地获取 Tabulator 实例——
+    // obtain the Tabulator instance
     function getPaperTable() {
-      // 1) 通过 Tabulator API
+      // 1) Via the Tabulator API
       if (typeof Tabulator !== "undefined" && typeof Tabulator.findTable === "function") {
         const arr = Tabulator.findTable("#paper-table");
         if (arr && arr[0]) return arr[0];
       }
-      // 2) 通过元素挂载（某些版本/初始化里会挂在 DOM 上）
+      // 2) Via element attachment (in some versions/initializations it’s mounted on the DOM)
       const el = document.getElementById("paper-table");
       if (el && el.tabulator) return el.tabulator;
 
-      // 未找到
+      // Not found
       return null;
     }
 
-    // ——点击“Generate Answers”后执行——
+    // Executed after clicking “Generate Answers”
     async function generateAnswers() {
       const table = getPaperTable();
       if (!table) {
@@ -175,7 +189,7 @@
         return;
       }
 
-      // 1) 列名（表头标题）
+      // 1) Column names (table header titles)
       const columnTitles = table.getColumns()
         .map(col => {
           const def = col.getDefinition ? col.getDefinition() : {};
@@ -185,18 +199,21 @@
 
       const columnsObj = { columns: columnTitles };
 
-      // 2) 每行的文件 URL（假设字段名为 url）
+      // 2) File URL of each row (constructed from file_name)
       const urls = table.getData()
-        .map(row => (row && typeof row.url === "string") ? row.url.trim() : "")
+        .map(row => row && row.file_name
+          ? `/media/uploaded_papers/${encodeURIComponent(row.file_name)}`
+          : ""
+        )
         .filter(u => u.length > 0);
 
       const urlsObj = { urls };
 
-      // 调试输出
+      // Debug output
       console.log("columnsObj:", columnsObj);
       console.log("urlsObj:", urlsObj);
 
-      // 3) 发送给后端
+      // 3) Send to backend
       const endpoint = `/question/${encodeURIComponent(questionID)}/generate-request-accept/`;
 
       try {
@@ -221,21 +238,14 @@
         console.log("server response:", data);
 
         if (data.ok) {
-          //直接把后端返回的 LLM 字符串打印到浏览器控制台
+          //Directly print the LLM string returned by the backend to the browser console
           console.log("[LLM text]:", data.llm_text);
-
-          // （可选）如果后端也返回了 console_script，并且你确实想执行它来打印
-          //if (typeof data.console_script === "string" && data.console_script.trim()) {
-          //  try {
-              // 更安全的姿势：避免 eval，使用 Function，并捕获异常
-          //    new Function(data.console_script)();
-          //  } catch (e) {
-          //    console.warn("console_script execution failed:", e);
-          //  }
-          //}
-
-          // TODO: 你也可以把 data.llm_text 渲染到页面上
-          // document.querySelector('#result').textContent = data.llm_text;
+          const tableInst = getPaperTable();
+          if (window.applyLlmTextToTabulator && tableInst) {
+            window.applyLlmTextToTabulator(data.llm_text, tableInst);
+          } else {
+            console.warn("applyLlmTextToTabulator or table instance not ready");
+          }
         } else {
           console.error("Server error:", data.error);
         }
@@ -307,11 +317,23 @@
 
   <div id="vars" data-question-id="{{ question_id|escapejs }}"></div>
   <script>
-    const questionID = document.getElementById('vars').dataset.questionId;
+    window.questionID = document.getElementById('vars').dataset.questionId;
   </script>
   <script src="https://cdn.jsdelivr.net/npm/js-cookie@3.0.1/dist/js.cookie.min.js"></script>
   <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.3/jquery.min.js"></script>
   <script src="https://unpkg.com/tabulator-tables@6.3.0/dist/js/tabulator.min.js" type="text/javascript"></script>
   <script src="{% static 'ligninapp/main.js' %}"></script>
+
+  {% if messages %}
+  <script>
+    (function(){
+      console.group("[server messages]");
+      {% for message in messages %}
+        console.log("{{ message|escapejs }}");
+      {% endfor %}
+      console.groupEnd();
+    })();
+  </script>
+  {% endif %}
 </body>
 </html>

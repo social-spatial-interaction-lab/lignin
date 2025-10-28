@@ -55,9 +55,9 @@ class Paper(RulesModel):
 
 
 class Entry(RulesModel):
-    paper = models.ForeignKey(Paper, on_delete=models.CASCADE)
+    paper = models.ForeignKey(Paper, on_delete=models.CASCADE, null=True, blank=True)
+    uploaded_paper = models.ForeignKey("UploadedPaper", on_delete=models.SET_NULL, null=True, blank=True, related_name="entries")
     description = models.TextField(blank=True)
-
     def __str__(self):
         if self.description:
             return f"{self.paper}, {self.description}"
@@ -108,6 +108,7 @@ class Value(RulesModel):
     creator = models.ForeignKey(LigninUser, null=True, on_delete=models.SET_NULL)
     value = models.CharField(max_length=1000)
     notes = models.TextField(blank=True)
+    highlights = models.JSONField(blank=True, null=True)
 
     def __str__(self):
         return f"{self.column} for {self.entry}: {self.value}"

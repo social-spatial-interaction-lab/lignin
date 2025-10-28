@@ -13,11 +13,17 @@ from rules import has_perm
 from django.views.generic.edit import CreateView, UpdateView, DeleteView
 from .forms import UploadedPaperForm, ReviewForm
 from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_GET
 from django.urls import reverse
 from django.shortcuts import redirect
 from .models import UploadedPaper
 from django.views.decorators.http import require_http_methods
 from django.contrib.auth.forms import UserCreationForm
+from django.db.models import Prefetch
+from django.contrib import messages
+from django.db import transaction
+import os
+from urllib.parse import unquote
 
 from .LLM_response import LLM_entrance
 
@@ -129,51 +135,65 @@ def add_paper(request, question_id, paper_id):
 
     return HttpResponse(status=201)
 
-    
+#10.20 column-delete  
 def get_papers(request, question_id):
-    uploads = UploadedPaper.objects.filter(review_id=question_id)
+    review = get_object_or_404(Review, id=question_id)
 
-    upload_data = []
-    for upload in uploads:
-        upload_data.append({
-            "id": f"upload-{upload.id}",
-            "source": "upload",
-            "title": upload.title,
-            "author": upload.author or "",
-            "year": upload.year or "",
-            "url": upload.file.url,
-            "notes": f"Uploaded on {upload.uploaded_at.strftime('%Y-%m-%d %H:%M')}",
-        })
+    columns_qs = review.columns.all().only("id", "name")
+    columns = list(columns_qs.values_list("id", "name"))  # [(id, name), ...]
+    col_id_to_name = {cid: name for cid, name in columns}
+    col_ids = [cid for cid, _ in columns]
+    col_names = [name for _, name in columns]
 
-    response_data = {
-        "data": upload_data,
-        "metadata": [
-            {"title": "Title", "field": "title"},
-            {"title": "Author", "field": "author"},
-            {"title": "Year", "field": "year"},
-            {"title": "Notes", "field": "notes"},
-            {"title": "URL", "field": "url"},
-        ]
+    entries_qs = (
+        review.entries
+        .prefetch_related(
+            Prefetch(
+                "value_set",
+                queryset=Value.objects.filter(column_id__in=col_ids).only("column_id", "value"),
+            )
+        )
+        .only("id")
+    )
+
+    rows = []
+    for entry in entries_qs:
+        row = {"entry_id": entry.id}
+        for name in col_names:
+            row[name] = ""
+        for v in entry.value_set.all():
+            name = col_id_to_name.get(v.column_id)
+            if name:
+                row[name] = v.value or ""
+        rows.append(row)
+
+    payload = {
+        "columns": col_names,  # Compatible with the old frontend
+        "columns_meta": [{"id": cid, "name": name} for cid, name in columns],
+        "rows": rows,
     }
-
-    return JsonResponse(response_data)
-
+    return JsonResponse(payload, safe=False)
 
 
 
+@require_POST
 def edit_annotation(request, entry_id, column_pk):
-    # if it already exists, edit it.
-    value_text = request.POST["value_text"]
-    note_text = request.POST["note_text"]
-    entry = get_object_or_404(Entry, id=entry_id)
-    column = get_object_or_404(Column, pk=column_pk)
-    lignin_user = get_object_or_404(LigninUser, owner=request.user)
+    value_text = request.POST.get("value_text", "")
+    # note_text = request.POST.get("note_text", "")
 
-    value, was_created = Value.objects.get_or_create(entry=entry, column=column, creator=lignin_user)
+    entry  = get_object_or_404(Entry, id=entry_id)
+    column = get_object_or_404(Column, pk=column_pk)
+
+    # First try to locate an existing value while ignoring the creator; if none exists, create one
+    value = Value.objects.filter(entry=entry, column=column).order_by("-id").first()
+    if value is None:
+        value = Value(entry=entry, column=column)  # No longer dependent on LigninUser/creator
+
     value.value = value_text
     # value.notes = note_text
     value.save()
-    return HttpResponse(200)
+    return HttpResponse(status=204)
+
 
 
 def reject_paper(request, question_id, paper_id):
@@ -266,25 +286,37 @@ def save_review_title(request):
 def add_columns_papers(request, review_id):
     review = get_object_or_404(Review, pk=review_id)
     return render(request, "ligninapp/add_columns_papers.html", {"review": review})
-
+#10.20 Create Entry and Uploadedpaper.So it can upload the pdf file.
+@transaction.atomic
 def upload_paper(request, question_id):
     review = get_object_or_404(Review, id=question_id)
 
-    if request.method == 'POST':
-        title = request.POST.get('title')
-        author = request.POST.get('author', '')
-        year = request.POST.get('year') or None
-        file = request.FILES.get('file')
+    if request.method != "POST":
+        return redirect("question", question_id)
 
-        UploadedPaper.objects.create(
-            review=review,
-            title=title,
-            author=author,
-            year=year if year else None,
-            file=file
-        )
+    f = request.FILES.get("file")
+    if not f:
+        messages.error(request, "No file received.")
+        return redirect("question", question_id)
 
-    return redirect('question', question_id)
+    # 1) Physically save the PDF
+    paper = UploadedPaper.objects.create(
+        review=review,
+        title=os.path.splitext(os.path.basename(f.name))[0],
+        file=f,
+    )
+
+    # 2) Create an Entry, attach it to the Review, and link it to the UploadedPaper in the backend
+    entry = Entry.objects.create(description="", uploaded_paper=paper)
+    review.entries.add(entry)
+
+    # 3) Only write the file_name column (no longer write file_url)
+    file_name_col, _ = Column.objects.get_or_create(name="file_name")
+    review.columns.add(file_name_col)
+    Value.objects.create(entry=entry, column=file_name_col, value=os.path.basename(paper.file.name))
+
+    messages.success(request, f"Uploaded: {os.path.basename(paper.file.name)}")
+    return redirect("question", question_id)
 
 @require_http_methods(["DELETE"])
 def delete_uploaded_paper(request, paper_id):
@@ -295,6 +327,50 @@ def delete_uploaded_paper(request, paper_id):
     except UploadedPaper.DoesNotExist:
         return JsonResponse({'success': False, 'error': 'Paper not found'}, status=404)
 
+#10.20 delete-column
+@require_http_methods(["POST"])
+@transaction.atomic
+def remove_column_from_review(request, review_id, column_id):
+    review = get_object_or_404(Review, pk=review_id)
+    column = get_object_or_404(Column, pk=column_id)
+
+    # Only allow the operation if the column belongs to the current review
+    if not review.columns.filter(pk=column.pk).exists():
+        return JsonResponse({"ok": False, "error": "Column not in this review"}, status=400)
+
+    # 1) Delete all Values in this column under the current review’s entries
+    entry_ids = list(review.entries.values_list("id", flat=True))
+    Value.objects.filter(column=column, entry_id__in=entry_ids).delete()
+
+    # 2) Remove this column from the review's column set
+    review.columns.remove(column)
+
+    # 3) Optional cleanup: if this column is no longer used by any review and has no remaining Value, physically delete it
+    if not column.review_set.exists() and not Value.objects.filter(column=column).exists():
+        column.delete()
+
+    return JsonResponse({"ok": True})
+
+#10.20 delete-row
+@require_http_methods(["POST"])
+@transaction.atomic
+def remove_entry_from_review(request, review_id, entry_id):
+    review = get_object_or_404(Review, pk=review_id)
+    entry = get_object_or_404(Entry, pk=entry_id)
+
+    # Check whether the entry belongs to the current review
+    if not review.entries.filter(pk=entry.pk).exists():
+        return JsonResponse({"ok": False, "error": "This entry does not belong to this review."}, status=400)
+
+    # 1. Unlink it from the current review
+    review.entries.remove(entry)
+
+    # 2. If the entry no longer belongs to any review, safely delete it
+    if not entry.review_set.exists():
+        Value.objects.filter(entry=entry).delete()
+        entry.delete()
+
+    return JsonResponse({"ok": True})
 
 @require_http_methods(["POST"])
 def update_uploaded_paper(request, paper_id):
@@ -331,7 +407,7 @@ def register(request):
         form = UserCreationForm(request.POST)
         if form.is_valid():
             form.save()
-            return redirect('login')  # 来自 django.contrib.auth.urls
+            return redirect('login')  # from django.contrib.auth.urls
     else:
         form = UserCreationForm()
     return render(request, 'registration/register.html', {'form': form})
@@ -339,39 +415,183 @@ def register(request):
 @require_http_methods(["POST"])
 def generate_request_accept_view(request, question_id):
     try:
-        # 1) Parse frontend JSON
         payload = json.loads(request.body.decode("utf-8"))
         columns_obj = payload.get("columns", {})
         urls_obj = payload.get("urls", {})
 
-        # 2) Call custom module (synchronously wait for result string)
-        llm_text = LLM_entrance(columns_obj, urls_obj)
-        if not isinstance(llm_text, str):
-            llm_text = str(llm_text)
+        # 1) Call the LLM
+        results_per_url = LLM_entrance(columns_obj, urls_obj, include_highlights=True)
 
-        # 3) Print to backend console (for debugging/auditing)
-        print("=== generate_request_accept_view received ===")
-        print("columns_obj:", json.dumps(columns_obj, indent=2, ensure_ascii=False))
-        print("urls_obj:", json.dumps(urls_obj, indent=2, ensure_ascii=False))
-        print("LLM_response:", llm_text)
-        print("============================================")
-        logger.info("LLM_response: %s", llm_text)
+        # 2) Split (for frontend compatibility)
+        qa_only, highlights_only = [], []
+        for item in results_per_url:
+            qa_payload = (item or {}).get("qa", {}) or {}
+            hl_payload = (item or {}).get("highlights", None)
+            qa_only.append(qa_payload)
+            highlights_only.append(hl_payload)
 
-        # 4) Send back to frontend
-        #    - llm_text: business string result
-        #    - console_script: frontend can directly eval/Function/insert <script> to execute, so that it prints in browser console
-        #      (Recommended approach: frontend receives llm_text and then does console.log(data.llm_text) itself)
+        llm_text = qa_only
+
+        # 3) Write answers into EAV (only answers, do not handle highlights)
+        review = get_object_or_404(Review, id=question_id)
+
+        # Column "file_name" used for locating the row (note: column name is "file_name")
+        file_name_col, _ = Column.objects.get_or_create(name="file_name")
+        # If this column is not yet in the review’s column set, add it
+        if not review.columns.filter(pk=file_name_col.pk).exists():
+            review.columns.add(file_name_col)
+
+        # For convenience: fetch all entries of the current review first for set filtering
+        review_entry_ids = set(review.entries.values_list("id", flat=True))
+
+        # Try to get LigninUser as the creator (optional)
+        try:
+            creator = getattr(request.user, "lignin_user", None)
+        except Exception:
+            creator = None
+
+        @transaction.atomic
+        def persist_answers():
+            for item in (results_per_url or []):
+                qa = (item or {}).get("qa", {}) or {}
+                hl = (item or {}).get("highlights", {}) or {}
+                url = (qa.get("url") or "").strip()
+                if not url:
+                    continue
+
+                # URL -> filename (decode %20, etc.
+                base = os.path.basename(url)
+                filename = unquote(base).strip()
+                if not filename:
+                    continue
+
+                # Use file_name to locate the entry (limited to the current review)
+                entry_qs = (
+                    Value.objects
+                    .filter(column=file_name_col, value=filename, entry_id__in=review_entry_ids)
+                    .values_list("entry_id", flat=True)
+                )
+                entry_id = next(iter(entry_qs), None)
+                if not entry_id:
+                    # The row may be empty or lack a file_name; you can choose to skip or create it here
+                    continue
+
+                answers_by_q = qa.get("answers_by_question") or {}
+                if not isinstance(answers_by_q, dict) or not answers_by_q:
+                    continue
+
+                # Preload the two tables "question -> highlights" for this URL (for writing highlights per question)
+                anchors_by_q   = hl.get("anchors_by_question")   or {}
+                locations_by_q = hl.get("locations_by_question") or {}
+                doc_info       = hl.get("doc")                   or {}
+
+                # Write answers for each "question column name"
+                for question_title, answer in answers_by_q.items():
+                    col_name = (question_title or "").strip()
+                    if not col_name:
+                        continue
+                    # Skip reserved column names
+                    if col_name in {"File name", "file_name", "Entry ID"}:
+                        continue
+
+                    column, _ = Column.objects.get_or_create(name=col_name)
+                    # Ensure the column belongs to the current review
+                    if not review.columns.filter(pk=column.pk).exists():
+                        review.columns.add(column)
+
+                    # Save or update the Value (simple strategy: overwrite if it already exists)
+                    val_obj = (
+                        Value.objects
+                        .filter(entry_id=entry_id, column=column)
+                        .order_by("-id")
+                        .first()
+                    )
+                    if val_obj is None:
+                        val_obj = Value(entry_id=entry_id, column=column, creator=creator)
+
+                    safe_answer = (answer or "").strip()
+                    if len(safe_answer) > 1000:
+                        safe_answer = safe_answer[:1000]  # Model field limit
+
+                    val_obj.value = safe_answer
+
+                    locs = locations_by_q.get(col_name) or []
+                    rects_all = []
+
+                    for loc in locs:
+                        occs = loc.get("occurrences") or []
+                        for occ in occs:
+                            page = occ.get("page")
+                            if isinstance(page, int) and page >= 0:
+                                page = page + 1
+                            rects = occ.get("rects") or []
+                            # Each rect is [x0, y0, x1, y1]
+                            for r in rects:
+                                rects_all.append({
+                                    "page": page,
+                                    "rect": r,
+                                })
+
+                    # Keep only pure coordinate arrays
+                    val_obj.highlights = rects_all
+                    val_obj.save()
+                    logger.warning("[HIGHLIGHT SAVED] review=%s entry=%s col=%r highlights=%r", review.id, entry_id, col_name, val_obj.highlights)
+        persist_answers()
+
+        # 4) Normal return (compatible with old frontend + new structure)
         return JsonResponse({
             "ok": True,
             "columns": columns_obj,
             "urls": urls_obj,
             "llm_text": llm_text,
-            "console_script": f"console.log({json.dumps(llm_text)});"
+            "results": results_per_url,
+            "qa": qa_only,
+            "highlights": highlights_only,
         }, status=200)
 
     except Exception as e:
         logger.exception("generate_request_accept_view failed")
-        return JsonResponse({
-            "ok": False,
-            "error": str(e),
-        }, status=400)
+        return JsonResponse({"ok": False, "error": str(e)}, status=400)
+
+
+@require_GET
+def get_entry_highlights(request, review_id, entry_id):
+    """Return all highlights of a specific entry under the given review, grouped by column name.
+    Response example:
+    {
+      "ok": true,
+      "entry_id": 123,
+      "file_name": "foo.pdf",
+      "by_column": {
+        "Q1: Method?": [{"page":1,"rect":[x0,y0,x1,y1]}, ...],
+        "Q2: Result?": [...]
+      }
+    }
+    """
+    review = get_object_or_404(Review, pk=review_id)
+    entry  = get_object_or_404(Entry,  pk=entry_id)
+
+    # Confirm that the entry belongs to the current review
+    if not review.entries.filter(pk=entry.pk).exists():
+        return JsonResponse({"ok": False, "error": "Entry not in this review"}, status=400)
+
+    # Retrieve the column set of the current review
+    col_ids = list(review.columns.values_list("id", flat=True))
+    values  = Value.objects.filter(entry=entry, column_id__in=col_ids).select_related("column")
+
+    # The corresponding file name in the row (if exists)
+    file_name = Value.objects.filter(entry=entry, column__name="file_name").values_list("value", flat=True).first() or ""
+
+    by_column = {}
+    for v in values:
+        col_name = v.column.name
+        if v.highlights:
+            # Return only if the column has highlights
+            by_column[col_name] = v.highlights
+
+    return JsonResponse({
+        "ok": True,
+        "entry_id": entry.id,
+        "file_name": file_name,
+        "by_column": by_column,
+    })

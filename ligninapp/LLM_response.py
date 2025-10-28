@@ -16,6 +16,11 @@ except Exception:
     BASE_DIR = os.getcwd()
 
 try:
+    from fuzzysearch import find_near_matches
+except Exception:
+    find_near_matches = None
+
+try:
     import fitz  # PyMuPDF
 except ImportError as e:
     fitz = None
@@ -26,12 +31,13 @@ _ANSWER_CLOSE = re.compile(r"\s*#{3}\s*ENDANSWER\s*#{3}\s*", re.IGNORECASE)
 
 
 EXCLUDE_COLUMNS = {
-    "Title", "Author", "Year", "Notes", "Paper(s)", "Delete",
+    "File name", "Entry ID", "Title", "Author", "Year", "Notes", "Paper(s)", "Delete",
 }
 
 def LLM_entrance(
     columns: Dict[str, Any] | List[str],
-    urls: Dict[str, Any] | List[str]
+    urls: Dict[str, Any] | List[str],
+    include_highlights: bool = True,     # NEW: Whether to include highlight or not
 ) -> List[Dict[str, Any]]:
     """
     New entry point: return results per URL
@@ -39,14 +45,21 @@ def LLM_entrance(
         1) Extract PDF text
         2) Construct prompt and call LLM
         3) Parse with parse_llm_output_sections to obtain (answers_by_question, evidence_by_question)
+        4) [optional] Build highlight locating payload (anchors + rectangles)
     - Return a list, where each element is:
         {
-          "url": str,
-          "answers_by_question": {question -> answer},
-          "evidence_by_question": {question -> [evidence]}
+          "qa": {
+            "url": str,
+            "answers_by_question": {question -> answer},
+            "evidence_by_question": {question -> [evidence]}
+          },
+          "highlights": {
+            "doc": {...},
+            "anchors_by_question": {...},
+            "locations_by_question": {...}
+          } | None
         }
     """
-
 
     # 1) Normalize
     col_list = normalize_columns(columns)
@@ -69,15 +82,36 @@ def LLM_entrance(
         # 2.c Handle the reply of LLM
         answers_by_q, evidence_by_q = parse_llm_output_sections(llm_raw)
 
-        # All results in on string
-        results.append({
+        # 2.d Build QA payload
+        qa_payload = {
             "url": url,
             "answers_by_question": answers_by_q,
             "evidence_by_question": evidence_by_q,
+        }
+
+        # 2.e [Optional] Build the highlight-location payload (decoupled from QA; failure does not affect QA).
+        highlights_payload = None
+        if include_highlights:
+            try:
+                # build_highlights_payload / url_to_fs_path / fuzzy_match_evidence / locate_text_in_pdf
+                highlights_payload = build_highlights_payload(
+                    url=url,
+                    evidence_by_question=evidence_by_q,
+                    full_text=pdf_text,            # The full text is already available, passing it in can skip one extraction.
+                    url_to_fs_path_fn=url_to_fs_path,
+                )
+            except Exception:
+                highlights_payload = None  # Fallback: does not block the main process.
+
+        # 2.f Append per-URL result(Dual payload, convenient for the frontend to consume separately.)
+        results.append({
+            "qa": qa_payload,
+            "highlights": highlights_payload,   # May be None (when include_highlights=False or an exception occurs).
         })
 
     # 3) return
     return results
+
 
 
 # -------------------------
@@ -136,7 +170,7 @@ def filter_columns(all_columns: List[str], exclude: Iterable[str]) -> List[str]:
 
 
     # === Use default questions and ignore input（TEST ONLY） ===
-    USE_DEFAULT_TEST_QUESTIONS = True
+    USE_DEFAULT_TEST_QUESTIONS = False
 
     # === Default questions） ===
     DEFAULT_QUESTIONS = [
@@ -312,8 +346,8 @@ Rules:
 - "evidence" must be exact verbatim quotes from the Paper Text (exact substring matches), up to 3 items.
 - "confidence" is a float between 0.0 and 1.0.
 - If the Paper Text does not contain sufficient information to answer a question, use:
-  - "answer": "N/A"
-  - "evidence": []
+  - "answer": "NOTFOUND"
+  - "evidence": NOTFOUND
   - "confidence": 0.0
 - Output must be strictly valid JSON; do not include any explanations or formatting outside the JSON object.
 """.strip()
@@ -504,6 +538,193 @@ def handle_sections(sections: Dict[str, Any], context: Optional[Dict[str, Any]] 
     # This part doesn't have an actual function right now.
     print("[handle_sections] context:", context or {})
     print("[handle_sections] sections:", json.dumps(sections, ensure_ascii=False)[:300])
+
+
+# =========================================================
+# Highlight Locating Helpers (self-contained & JSON-safe)
+# =========================================================
+
+def _safe_rect_to_list(rect: "fitz.Rect") -> List[float]:
+    """Convert PyMuPDF Rect to plain list[float] for JSON serialization."""
+    return [float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)]
+
+def fuzzy_match_evidence(evidence: str, full_text: str,
+                         max_edit_distances: Tuple[int, ...] = (0, 7, 50)) -> Optional[str]:
+    """
+    Try to find a near-exact substring of `evidence` inside `full_text`.
+    Returns the *matched substring* (best-effort) or None.
+    - Step up tolerance: 0 -> 7 -> 50 (configurable).
+    - If fuzzysearch is unavailable, fall back to exact substring search.
+    """
+    if not evidence or not full_text:
+        return None
+
+    # Exact match first (fast path)
+    if evidence in full_text:
+        return evidence
+
+    # Fuzzy match if library is available
+    if find_near_matches is not None:
+        for d in max_edit_distances:
+            try:
+                matches = find_near_matches(evidence, full_text, max_l_dist=d, max_deletions=d,
+                                            max_insertions=d, max_substitutions=d)
+            except Exception:
+                matches = []
+            if matches:
+                # take the first match (keep behavior deterministic)
+                return matches[0].matched
+
+    # Last resort: None (no match)
+    return None
+
+
+def locate_text_in_pdf(fs_path: str, target_text: str) -> List[Dict[str, Any]]:
+    """
+    Locate `target_text` in the PDF at fs_path, returning a list of occurrences:
+    [
+      { "page": int, "rects": [[x0,y0,x1,y1], ...], "page_size": [w, h] },
+      ...
+    ]
+    - Coordinates are in PDF page user space (points, origin at bottom-left).
+    - `rects` are the minimal bounding boxes for text quads on that page.
+    """
+    if not fs_path or not target_text or fitz is None:
+        return []
+
+    occurrences: List[Dict[str, Any]] = []
+    try:
+        doc = fitz.open(fs_path)
+    except Exception:
+        return []
+
+    try:
+        text_flags = 0
+        # Prefer preserving whitespace/ligatures when available
+        if hasattr(fitz, "TEXT_PRESERVE_WHITESPACE"):
+            text_flags |= fitz.TEXT_PRESERVE_WHITESPACE
+        if hasattr(fitz, "TEXT_PRESERVE_LIGATURES"):
+            text_flags |= fitz.TEXT_PRESERVE_LIGATURES
+        if hasattr(fitz, "TEXT_MEDIABOX_CLIP"):
+            text_flags |= fitz.TEXT_MEDIABOX_CLIP
+
+        for page_number in range(len(doc)):
+            page = doc[page_number]
+
+            try:
+                # Ask for quads to better follow text shape across wraps
+                quads = page.search_for(target_text, quads=True, flags=text_flags)
+            except Exception:
+                quads = []
+
+            if not quads:
+                continue
+
+            # Get page width/height in user space
+            w, h = float(page.rect.width), float(page.rect.height)
+
+            # If page has a transformation matrix, normalize rects back to page user space
+            ptm = getattr(page, "transformation_matrix", None)
+
+            rects: List[List[float]] = []
+            for q in quads:
+                rect = q.rect
+                # Some PyMuPDF versions expose Matrix; invert (~) to map back if present
+                if ptm is not None:
+                    try:
+                        rect = rect * (~ptm)
+                    except Exception:
+                        pass
+                rects.append(_safe_rect_to_list(rect))
+
+            occurrences.append({
+                "page": int(page_number),
+                "rects": rects,
+                "page_size": [w, h],
+            })
+
+    finally:
+        try:
+            doc.close()
+        except Exception:
+            pass
+
+    return occurrences
+
+
+def build_highlights_payload(url: str,
+                             evidence_by_question: Dict[str, List[str]],
+                             full_text: Optional[str],
+                             url_to_fs_path_fn) -> Dict[str, Any]:
+    """
+    Build the 'highlights' half of the dual payload.
+    Inputs:
+      - url: the PDF url (as you already return to front-end)
+      - evidence_by_question: {question: [evidence, ...]}
+      - full_text: whole-text of the PDF (if already computed in the QA path; else pass None)
+      - url_to_fs_path_fn: function that maps url -> local fs path (reuse your existing helper)
+    Output (JSON-serializable):
+    {
+      "doc": { "url": str, "doc_id": str (optional), "page_count": int (optional) },
+      "anchors_by_question": { q: [ { "evidence_index": i, "matched_text": str|null }, ... ] },
+      "locations_by_question": {
+         q: [ { "evidence_index": i, "occurrences": [ {page, rects, page_size}, ... ] }, ... ]
+      }
+    }
+    """
+    highlights = {
+        "doc": {
+            "url": url,
+            # add doc_id / page_count as needed; for now, only minimal fields are kept.
+        },
+        "anchors_by_question": {},
+        "locations_by_question": {},
+    }
+
+    if not evidence_by_question:
+        return highlights
+
+    # Get the full PDF text (if not provided).
+    if full_text is None:
+        # You already have an implementation of extract_text_from_pdf(url); if it cannot be retrieved here, set it to empty.
+        try:
+            full_text = extract_text_from_pdf(url)  # noqa: F821  (refer to your existing function)
+        except Exception:
+            full_text = ""
+
+    # File system path (for PyMuPDF to open).
+    fs_path = None
+    try:
+        fs_path = url_to_fs_path_fn(url)
+    except Exception:
+        pass
+
+    for q, ev_list in (evidence_by_question or {}).items():
+        anchors_row: List[Dict[str, Any]] = []
+        locs_row: List[Dict[str, Any]] = []
+
+        # Keep the order of evidences aligned.
+        for idx, ev in enumerate(ev_list or []):
+            matched = fuzzy_match_evidence(ev, full_text or "")
+            anchors_row.append({
+                "evidence_index": idx,
+                "matched_text": matched,
+            })
+
+            occurrences = []
+            if matched and fs_path:
+                occurrences = locate_text_in_pdf(fs_path, matched)  # May be an empty array.
+
+            locs_row.append({
+                "evidence_index": idx,
+                "occurrences": occurrences,
+            })
+
+        highlights["anchors_by_question"][q] = anchors_row
+        highlights["locations_by_question"][q] = locs_row
+
+    return highlights
+
 
 # -------------------------
 # TEST ONLY

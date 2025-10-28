@@ -6,7 +6,9 @@ const findResults = $("#find-results");
 const paperTable = $("#paper-table");
 const snowballResults = $("#snowball-results");
 
-// === NEW: Confirm & Generate handler ===
+// The page usually injects questionID in the template; if not, you can extract it from the URL instead.
+const questionID = window.questionID || (location.pathname.match(/question\/(\d+)/) || [])[1];
+
 function escapeHtml(s){
   return String(s).replace(/[&<>"]/g, c => (
     { "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]
@@ -14,29 +16,44 @@ function escapeHtml(s){
 }
 
 document.getElementById('confirm-generate-btn')?.addEventListener('click', async function () {
-  const questions = [];
-  document.querySelectorAll('.question-text').forEach(el => {
-    questions.push(el.textContent.trim());
-  });
-
-  const pathParts = window.location.pathname.split('/');
-  const questionId = pathParts[pathParts.indexOf('question') + 1];
-
   try {
-    const response = await fetch(`/question/${questionId}/generate_answers/`, {
+    // Collect column names from the current table
+    const columns = (table?.getColumns() || [])
+      .map(col => col.getField())
+      .filter(f => f && f !== 'entry_id');
+
+    // try extracting file_url (or file_name) from each row as urls.
+    const data = table?.getData() || [];
+    const urls = data.map(r => r.file_url || r.file || r.url || "").filter(Boolean);
+
+    const res = await fetch(`/question/${questionID}/generate-request-accept/`, {
       method: "POST",
       headers: {
+        "X-CSRFToken": csrftoken,
         "Content-Type": "application/json",
-        "X-CSRFToken": csrftoken
       },
-      body: JSON.stringify({ questions: questions })
+      body: JSON.stringify({
+        columns,
+        urls,
+      }),
     });
 
-    const data = await response.json();
-    console.log("Received answers:", data);
-    renderQATable(data.answers);
-  } catch (error) {
-    console.error("Error generating answers:", error);
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`HTTP ${res.status}: ${text}`);
+    }
+
+    const out = await res.json();
+    console.log("server response:", out);
+    if (out.ok) {
+      console.log("[LLM text]:", out.llm_text);
+      alert("Generation request accepted — see console for details.");
+    } else {
+      alert("Server error: " + (out.error || "unknown"));
+    }
+  } catch (err) {
+    console.error(err);
+    alert("Failed: " + err.message);
   }
 });
 
@@ -80,100 +97,248 @@ $(document).ready(() => {
   reloadPapers();
 });
 
+
 function reloadPapers() {
-  $.get('/question/' + questionID + '/papers/', {}, function(data) {
+  if (!questionID) { console.warn("reloadPapers(): missing questionID"); return; }
+
+  $.get(`/question/${questionID}/papers/`, {}, function (payload) {
     if (table && typeof table.destroy === "function") {
       try { table.destroy(); } catch (e) {}
       $("#paper-table").empty();
     }
 
+    const meta = Array.isArray(payload.columns_meta) ? payload.columns_meta : null;
+    const fieldToColId = Object.fromEntries(
+      (meta || []).map(({ id, name }) => [name, id])
+    );
+    const dynamicCols = meta
+      ? meta.map(({ id, name }) => {
+          const titleText = (name === "file_name") ? "File name" : name;
+
+          // If this is the "File name" column, return a custom formatter that adds a hyperlink
+          if (name === "file_name") {
+            return {
+              title: titleText,
+              field: name,
+              editor: false,
+              formatter: function(cell) {
+                const fileName = cell.getValue();
+                if (!fileName) return "";
+                const link = document.createElement("a");
+                link.textContent = fileName;
+                link.href = "#";
+                link.style.color = "#007bff";
+                link.style.textDecoration = "underline";
+                link.addEventListener("click", function (e) {
+                  e.preventDefault();
+                  const rowData = cell.getRow().getData();
+                  const entryId = rowData.entry_id;
+                  const fileUrl = `/media/uploaded_papers/${encodeURIComponent(fileName)}`;
+                  openPaperModal({
+                    id: entryId,
+                    url: fileUrl,
+                    name: fileName,
+                    abstract: ""
+                  });
+                });
+                return link;
+              },
+              titleFormatter: function() {
+                const span = document.createElement('span');
+                span.textContent = titleText;
+                span.style.fontWeight = 'bold';
+                return span;
+              }
+            };
+          }
+
+
+
+          // Otherwise, follow the original logic (with a delete button)
+          return {
+            title: titleText,
+            field: name,
+            editor: "input",
+            // Render a title and a small button in the column header
+            titleFormatter: function(cell, formatterParams, onRendered) {
+              // Determine whether the column is protected
+              if (name === "file_name" || titleText === "File name") {
+                // Return only the title text, do not render the button
+                const span = document.createElement('span');
+                span.textContent = titleText;
+                span.style.fontWeight = 'bold';
+                return span;
+              }
+              const wrap = document.createElement('div');
+              wrap.style.display = 'flex';
+              wrap.style.alignItems = 'center';
+              wrap.style.gap = '6px';
+
+              const span = document.createElement('span');
+              span.textContent = titleText;
+
+              const btn = document.createElement('button');
+              btn.textContent = '✕';
+              btn.title = 'Remove this column from this review';
+              btn.style.padding = '0 6px';
+              btn.style.lineHeight = '18px';
+              btn.style.color = '#b00';
+              btn.style.background = '#f7f7f7'
+              btn.style.border = '1px solid #ccc';
+              btn.style.borderRadius = '4px';
+              btn.style.background = '#f7f7f7';
+              btn.style.cursor = 'pointer';
+
+              btn.addEventListener('click', async (ev) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                if (!confirm(`Remove column "${name}" from this review? This will delete its cells in this review.`)) return;
+                try {
+                  const res = await fetch(`/review/${encodeURIComponent(questionID)}/columns/${encodeURIComponent(id)}/remove/`, {
+                    method: "POST",
+                    headers: { "X-CSRFToken": csrftoken },
+                  });
+                  if (!res.ok) {
+                    const txt = await res.text();
+                    throw new Error(`HTTP ${res.status}: ${txt}`);
+                  }
+                  const out = await res.json();
+                  if (out.ok) {
+                    reloadPapers();
+                  } else {
+                    alert(out.error || "Failed to remove column.");
+                  }
+                } catch (err) {
+                  console.error(err);
+                  alert("Remove failed: " + err.message);
+                }
+              });
+
+              wrap.appendChild(span);
+              wrap.appendChild(btn);
+              return wrap;
+            }
+          };
+        })
+      : (Array.isArray(payload.columns) ? payload.columns.map((name) => ({
+          title: (name === "file_name") ? "File name" : name,
+          field: name,
+          editor: false,
+        })) : []);
+
+
+    const deleteColumn = {
+      title: "", // Do not display a header title
+      field: "delete",
+      width: 50,
+      hozAlign: "center",
+      formatter: function(cell) {
+        const btn = document.createElement("button");
+        btn.textContent = "✕";
+        btn.title = "Remove this row (entry)";
+        btn.style.color = "#a00";
+        btn.style.background = "#fff";
+        btn.style.border = "1px solid #ccc";
+        btn.style.borderRadius = "4px";
+        btn.style.cursor = "pointer";
+        btn.style.fontWeight = "bold";
+        btn.addEventListener("mouseenter", () => btn.style.background = "#eee");
+        btn.addEventListener("mouseleave", () => btn.style.background = "#fff");
+        
+        btn.addEventListener("click", async (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+        
+          const row = cell.getRow();
+          const data = row.getData();
+          const entryId = data.entry_id;
+          if (!entryId) return;
+        
+          if (!confirm(`Delete entry #${entryId}? This will remove the row and its values.`)) return;
+        
+          try {
+            const res = await fetch(`/review/${encodeURIComponent(questionID)}/entries/${encodeURIComponent(entryId)}/remove/`, {
+              method: "POST",
+              headers: { "X-CSRFToken": csrftoken },
+            });
+            const out = await res.json();
+            if (out.ok) {
+              row.delete(); // Immediately remove from frontend
+              console.log(`Entry ${entryId} removed.`);
+            } else {
+              alert(out.error || "Failed to delete row.");
+            }
+          } catch (err) {
+            console.error(err);
+            alert("Delete failed: " + err.message);
+          }
+        });
+        
+        return btn;
+      }
+    };
+        
+
+
+
+    
+    const columns = [
+      deleteColumn,
+      { title: "Entry ID", field: "entry_id", visible: false },
+      ...dynamicCols
+    ];
+
     table = new Tabulator("#paper-table", {
-      maxHeight: "80vh",
       height: "80vh",
-      data: data.data,
+      data: Array.isArray(payload.rows) ? payload.rows : [],
       layout: "fitData",
       renderHorizontal: "virtual",
-      editTriggerEvent: "dblclick",
-      persistence: { columns: ["width"] },
-      columns: [
-        { title: "Title", field: "title", editor: "input" },
-        { title: "Author", field: "author", editor: "input" },
-        { title: "Year", field: "year", editor: "number", editorParams: { min: 1800, max: 2100, step: 1 } },
-        { title: "Notes", field: "notes", editor: "textarea" },
-        {
-          title: "Paper(s)",
-          field: "url",
-          formatter: function(cell) {
-            const d = cell.getRow().getData();
-            const url = cell.getValue();
-            const name =
-              d.paper_title || d.file_name || d.filename || d.original_filename ||
-              (function(u){
-                if (!u) return "";
-                try { return decodeURIComponent(u.split("/").pop().split("?")[0]); }
-                catch { return u; }
-              })(url);
-            const paperId = d.id.replace("upload-", "");
-            const abstract = d.abstract || d.notes || "";
-
-            return `<a href="#" class="paper-link"
-                        data-id="${paperId}"
-                        data-url="${url}"
-                        data-name="${escapeHtml(name)}"
-                        data-abstract="${escapeHtml(abstract)}">${escapeHtml(name || "—")}</a>`;
-          },
-          widthGrow: 2,
-          hozAlign: "left",
-          cellClick: function(e, cell) {
-            const d = cell.getRow().getData();
-            openPaperModal({
-              id: d.id.replace("upload-", ""),
-              url: d.url,
-              name: d.paper_title || d.file_name || d.filename || d.original_filename,
-              abstract: d.abstract || d.notes || ""
-            });
-          }
-        },
-        {
-          title: "Delete",
-          formatter: "buttonCross",
-          width: 100,
-          align: "center",
-          cellClick: function(e, cell) {
-            const paperId = cell.getRow().getData().id.replace("upload-", "");
-            fetch(`/papers/delete/${paperId}/`, {
-              method: "DELETE",
-              headers: { "X-CSRFToken": csrftoken },
-            })
-            .then(res => res.json())
-            .then(data => {
-              if (data.success) cell.getRow().delete();
-              else alert("Delete failed: " + data.error);
-            });
-          }
-        }
-      ]
+      columns
     });
+    let reverting = false; //  Placed in module scope
 
-    table.on("cellEdited", function(cell) {
+    table.on("cellEdited", async function (cell) {
+      if (reverting) return;  //  Prevent rollback from triggering again
+    
+      const colDef  = cell.getColumn().getDefinition();
+      const field   = colDef.field;
+      const colId   = fieldToColId[field];  // Retrieve backend column ID via column name
       const rowData = cell.getRow().getData();
-      const paperId = rowData.id.replace("upload-", "");
-      fetch(`/papers/update/${paperId}/`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-CSRFToken": csrftoken,
-        },
-        body: JSON.stringify({
-          title: rowData.title,
-          author: rowData.author,
-          year: rowData.year,
-          notes: rowData.notes,
-        }),
-      })
-      .then(res => res.json())
-      .then(data => { if (!data.success) alert("Update failed: " + data.error); });
+      const entryId = rowData.entry_id;
+    
+      if (!entryId || !colId || field === "file_name") return;
+    
+      const newVal = cell.getValue();
+      const oldVal = cell.getOldValue();
+    
+      try {
+        const res = await fetch(`/values/${encodeURIComponent(entryId)}/${encodeURIComponent(colId)}/`, {
+          method: "POST",
+          headers: {
+            "X-CSRFToken": csrftoken,
+            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+          },
+          body: new URLSearchParams({
+            value_text: (newVal ?? "").toString(),
+            note_text: "",  // Leave it empty as before
+          }),
+        });
+    
+        if (!res.ok) {
+          //  Use restoreOldValue() and a flag to prevent triggering cellEdited again
+          reverting = true;
+          cell.restoreOldValue();
+          reverting = false;
+    
+          const text = await res.text();
+          throw new Error(`HTTP ${res.status}: ${text}`);
+        }
+      } catch (err) {
+        console.error("[save cell] failed:", err);
+        alert("save failed" + err.message);
+      }
     });
+    
   }, 'json');
 }
 
@@ -223,6 +388,154 @@ function openPaperModal({ id, url, name, abstract = "" }) {
   }
   input.value = id || "";
   document.getElementById("paperModal").style.display = "block";
+  // 1) Retrieve the highlights for this row
+  async function fetchEntryHighlights(reviewId, entryId) {
+    const res = await fetch(`/review/${encodeURIComponent(reviewId)}/entries/${encodeURIComponent(entryId)}/highlights/`, {
+      method: "GET",
+      headers: { "X-CSRFToken": csrftoken },
+    });
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(`HTTP ${res.status}: ${txt}`);
+    }
+    return await res.json();
+  }
+
+  // 2) Inject (wait until PDF.js is ready)
+  async function injectHighlightsIntoPdfViewer(iframe, highlightsByColumn) {
+    // 0) Wait for PDF.js to be ready
+    const app = await new Promise((resolve, reject) => {
+      const win = iframe.contentWindow;
+      let tries = 0;
+      const t = setInterval(() => {
+        tries++;
+        try {
+          if (win && win.PDFViewerApplication && win.PDFViewerApplication.pdfViewer) {
+            clearInterval(t);
+            resolve(win.PDFViewerApplication);
+            return;
+          }
+        } catch (e) {}
+        if (tries > 200) { clearInterval(t); reject(new Error("PDF.js not ready")); }
+      }, 50);
+    });
+    const viewer = app.pdfViewer;
+  
+    // 1) Wait for document/pages to be ready (ensure total pages & views are available)
+    await new Promise((resolve) => {
+      if (viewer._pages && viewer._pages.length) resolve();
+      else app.eventBus.on("pagesinit", resolve);
+    });
+    const totalPages = viewer._pages?.length || app.pdfDocument?.numPages || 0;
+    console.log("[HL] totalPages =", totalPages);
+  
+    // 2) Now perform "grouping + page index validation"
+    const grouped = {}; // pageIndex(0-based) -> rect[]
+    Object.entries(highlightsByColumn || {}).forEach(([col, arr]) => {
+      (arr || []).forEach(it => {
+        if (!it || !Array.isArray(it.rect)) return;
+        let p = Number(it.page);
+        if (!Number.isFinite(p)) return;
+  
+        // Both 0-based and 1-based page indexes are supported, judged based on totalPages
+        let pageIndex;
+        if (p >= 1 && p <= totalPages) pageIndex = p - 1;          // 1-based
+        else if (p >= 0 && p < totalPages) pageIndex = p;          // 0-based
+        else {
+          console.warn("[HL] page out of range:", p, "total:", totalPages);
+          return;
+        }
+        (grouped[pageIndex] ||= []).push(it.rect.slice(0, 4));
+      });
+    });
+  
+    const pagesWithHL = Object.keys(grouped).map(n => +n);
+    if (!pagesWithHL.length) {
+      console.log("[HL] no highlights to draw");
+      return;
+    }
+    console.log("[HL] pages to draw:", pagesWithHL, "counts:", pagesWithHL.map(i => grouped[i].length));
+  
+    // 3) Draw rectangles (and redraw on pagerendered/textlayerrendered/scalechanging)
+    function drawForPage(pageIndex) {
+      const pv = viewer.getPageView(pageIndex);
+      if (!pv || !pv.div) return;
+      const list = grouped[pageIndex];
+      if (!list || !list.length) return;
+  
+      pv.div.querySelectorAll(".lignin-highlight").forEach(n => n.remove());
+      const host = pv.div.querySelector(".textLayer") || pv.div;
+      if (getComputedStyle(host).position === "static") host.style.position = "relative";
+  
+      list.forEach(rect => {
+        let r = rect;
+        if ((r[2] - r[0]) < 2 && (r[3] - r[1]) < 2) r = [r[0], r[1], r[0] + 6, r[1] + 12];
+  
+        const vr = pv.viewport.convertToViewportRectangle(r);
+        const x = Math.min(vr[0], vr[2]);
+        const y = Math.min(vr[1], vr[3]);
+        const w = Math.abs(vr[0] - vr[2]);
+        const h = Math.abs(vr[1] - vr[3]);
+  
+        const el = document.createElement("div");
+        el.className = "lignin-highlight";
+        el.style.cssText = `position:absolute;left:${x}px;top:${y}px;width:${w}px;height:${h}px;pointer-events:none;background:rgba(255,230,0,.35);border:1px solid rgba(180,160,0,.7);border-radius:2px;z-index:7`;
+        host.appendChild(el);
+      });
+  
+      console.log(`[HL] drawn page ${pageIndex + 1} (${list.length} rects)`);
+    }
+  
+    // First draw highlights on pages that have already rendered
+    for (const i of pagesWithHL) {
+      const pv = viewer.getPageView(i);
+      if (pv && pv.renderingState === 3 /* FINISHED */) drawForPage(i);
+    }
+  
+    // For subsequently rendered pages
+    app.eventBus.on("pagerendered", e => {
+      const i = (e?.pageNumber ?? 1) - 1;
+      if (grouped[i]) {
+        const doDraw = () => drawForPage(i);
+        app.eventBus.on("textlayerrendered", ev => { if ((ev?.pageNumber ?? 1) - 1 === i) doDraw(); });
+        setTimeout(doDraw, 100);
+      }
+    });
+  
+    // Redraw on zoom/rotation changes
+    app.eventBus.on("scalechanging", () => pagesWithHL.forEach(drawForPage));
+    app.eventBus.on("rotationchanging", () => pagesWithHL.forEach(drawForPage));
+  }
+  
+  
+
+  // === Place at the end of openPaperModal: fetch and inject after iframe onload ===
+  const once = (node, type) =>
+    new Promise(resolve => node.addEventListener(type, function h(e){ node.removeEventListener(type, h); resolve(e); }));
+
+  (async () => {
+    try {
+      await new Promise((resolve) => {
+        const d = viewer.contentDocument;
+        if (d && d.readyState === "complete") {
+          resolve();
+        } else {
+          const done = () => resolve();
+          viewer.addEventListener("load", done, { once: true });
+          setTimeout(resolve, 1500);
+        }
+      });
+
+      const payload = await fetchEntryHighlights(questionID, id);
+      if (!payload.ok) throw new Error(payload.error || "highlight fetch failed");
+
+      console.log("[HL] will fetch & inject for entry", id);
+      await injectHighlightsIntoPdfViewer(viewer, payload.by_column || {});
+    } catch (err) {
+      console.warn("[highlight] skip:", err);
+    }
+  })();
+
 }
 
 function closePaperModal() {
@@ -309,4 +622,114 @@ document.addEventListener("click", function (e) {
   if (e.target && e.target.id === "edit-btn") {
     openNestedModal();
   }
+});
+
+// Open/close the upload modal (if corresponding button exists on the page)
+function toggleUploadModal(show) {
+  const modal = document.getElementById("uploadModal");
+  if (!modal) return;
+  modal.style.display = show ? "block" : "none";
+}
+
+// Bind upload form for AJAX submission: automatically refresh EAV table upon success
+function bindUploadFormAjax() {
+  const uploadForm = document.querySelector('#uploadModal form');
+  if (!uploadForm) return;
+
+  uploadForm.addEventListener('submit', async function (e) {
+    e.preventDefault();
+    const action = uploadForm.getAttribute('action') || uploadForm.action;
+    const formData = new FormData(uploadForm);
+
+    try {
+      const res = await fetch(action, {
+        method: "POST",
+        headers: { "X-CSRFToken": csrftoken },
+        body: formData
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Upload failed: HTTP ${res.status}: ${text}`);
+      }
+
+      // On success: close modal, clear file input, and refresh table
+      toggleUploadModal(false);
+      const fileInput = uploadForm.querySelector('input[type="file"]');
+      if (fileInput) fileInput.value = "";
+      reloadPapers();
+
+      console.log("[upload] success");
+    } catch (err) {
+      console.error(err);
+      alert("Upload failed: " + err.message);
+    }
+  });
+}
+
+// Display answers. Input: llmText = data.llm_text, table = your Tabulator instance
+function applyLlmTextToTabulator(llmText, table) {
+  if (!Array.isArray(llmText)) return;
+
+  const FILE_COL_TITLE = "File name"; // If  column title differs, change it here
+
+  // 1) 先建 列标题 -> 字段名 映射（title 可能≠ field）
+  const titleToField = new Map();
+  table.getColumns().forEach(col => {
+    const def = col.getDefinition();
+    if (def && def.title) {
+      titleToField.set(def.title, def.field || def.title);
+    }
+  });
+
+  // 拿到 File name 对应的实际 field 名
+  const fileField = titleToField.get(FILE_COL_TITLE) || FILE_COL_TITLE;
+
+  // 2) 建立 行索引：filename -> RowComponent
+  const rowByFilename = new Map();
+  table.getRows().forEach(row => {
+    const d = row.getData();
+    const fname = (d[fileField] || "").toString().trim(); // Use the field value!
+    if (fname) rowByFilename.set(fname, row);
+  });
+
+  // 3) 应用 llm_text 到对应单元格
+  const filenameFromUrl = (url) => {
+    if (!url) return null;
+    try { return url.split("/").pop(); } catch { return null; }
+  };
+
+  llmText.forEach(item => {
+    const fname = filenameFromUrl(item.url);
+    if (!fname) return;
+
+    const row = rowByFilename.get(fname);
+    if (!row) {
+      console.warn("No row matched file:", fname);
+      return;
+    }
+
+    const q2ans = item.answers_by_question || {};
+    const patch = {};
+
+    Object.entries(q2ans).forEach(([questionTitle, answer]) => {
+      const field = titleToField.get(questionTitle) || questionTitle;
+      if (answer !== undefined && answer !== null) {
+        patch[field] = (answer === "N/A") ? "" : answer;
+      }
+    });
+
+    if (Object.keys(patch).length) {
+      row.update(patch);
+    }
+  });
+}
+
+window.applyLlmTextToTabulator ||= applyLlmTextToTabulator;
+
+
+// ========== Initial rendering after document is fully loaded ==========
+$(document).ready(() => {
+  reloadPapers();
+  bindUploadFormAjax();   // Refresh after successful upload
 });

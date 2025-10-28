@@ -23,5 +23,8 @@ urlpatterns = [
     path('accounts/register/', views.register, name='register'),
 
     path("question/<int:question_id>/generate-request-accept/", views.generate_request_accept_view, name="generate-request-accept"),
+    path('review/<int:review_id>/columns/<int:column_id>/remove/', views.remove_column_from_review, name='remove-column-from-review'),
+    path('review/<int:review_id>/entries/<int:entry_id>/remove/', views.remove_entry_from_review, name='remove-entry-from-review'),
+    path('review/<int:review_id>/entries/<int:entry_id>/highlights/', views.get_entry_highlights, name='get-entry-highlights'),
 
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
