@@ -36,12 +36,3 @@ Each time you want to start the project again:
 .\.venv\Scripts\Activate
 python manage.py runserver
 ```
-
-## Important note
-Some static files are missing from the uploaded repository.
-The directory
-```
-\ligninapp\static\ligninapp\pdfjs\build
-```
-was not included correctly.
-You need to manually download the pdfjs build folder (version:pdfjs-3.11.174-dist) and paste it into this path before running the server.
