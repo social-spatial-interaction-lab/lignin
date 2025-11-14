@@ -6,6 +6,21 @@ const findResults = $("#find-results");
 const paperTable = $("#paper-table");
 const snowballResults = $("#snowball-results");
 
+// --- Busy overlay helpers ---
+function showBusy(message) {
+  const m = document.getElementById("busyModal");
+  if (!m) return;
+  const p = m.querySelector(".msg");
+  if (p && message) p.textContent = message;
+  m.style.display = "block";
+}
+
+function hideBusy() {
+  const m = document.getElementById("busyModal");
+  if (!m) return;
+  m.style.display = "none";
+}
+
 // The page usually injects questionID in the template; if not, you can extract it from the URL instead.
 const questionID = window.questionID || (location.pathname.match(/question\/(\d+)/) || [])[1];
 
@@ -111,6 +126,145 @@ function reloadPapers() {
     const fieldToColId = Object.fromEntries(
       (meta || []).map(({ id, name }) => [name, id])
     );
+    // --- DEBUG: inspect column id mapping ---
+    window.DEBUG_EDITED = true; // turn off by setting false
+    if (window.DEBUG_EDITED) {
+      try {
+        console.group("[EditedDebug] fieldToColId mapping");
+        console.table((meta || []).map(({ id, name, title }) => ({ field: name, column_pk: id, title })));
+        console.log("fieldToColId keys:", Object.keys(fieldToColId));
+        console.groupEnd();
+      } catch (e) { console.warn("[EditedDebug] mapping log failed", e); }
+  }
+    // NEW: Cache the edited_map returned by the backend (sparse structure)
+    const editedMap = (payload && payload.edited_map) ? payload.edited_map : {};
+    const isEdited = (entryId, field) => {
+      const m = editedMap[String(entryId)];
+      return !!(m && m[field] === true);
+    };
+    window.isEdited = isEdited;
+    const setEdited = (entryId, field, bool) => {
+      const key = String(entryId);
+      if (!editedMap[key]) editedMap[key] = {};
+      if (bool) editedMap[key][field] = true;
+      else delete editedMap[key][field]; // Sparse structure: remove the key directly when false
+    };
+
+    // NEW: Utility – render an “Edited” badge at the bottom-left of a cell (hover → ✕, click → unlock)
+    function renderEditedBadge(cell) {
+      const colDef  = cell.getColumn().getDefinition();
+      const field   = colDef.field;
+      const rowData = cell.getRow().getData();
+      const entryId = rowData.entry_id;
+      console.debug("11");
+      if (!entryId || !field || field === "file_name") return;
+      const el = cell.getElement();
+      // If not locked, remove any existing badge
+
+      if (!isEdited(entryId, field)) {
+        const prev = cell.getElement().querySelector(".cell-edited-badge");
+        if (prev) {
+          console.debug("[EditedBadge] removed");
+          prev.remove();
+          el.classList.remove("has-edited-badge");
+          el.style.removeProperty("--edited-badge-space");
+        }
+        return;
+      }
+
+      // If locked: create a badge if none exists
+      let badge = cell.getElement().querySelector(".cell-edited-badge");
+      if (!badge) {
+        badge = document.createElement("span");
+        badge.className = "cell-edited-badge";
+        badge.textContent = "Edited";
+        console.debug("badge created");
+        // Simple inline styles (can be moved to CSS)
+        Object.assign(badge.style, {
+          position: "absolute",
+          left: "4px",
+          bottom: "2px",
+          fontSize: "11px",
+          padding: "0 6px",
+          lineHeight: "16px",
+          border: "1px solid #bbb",
+          borderRadius: "10px",
+          background: "#f5f5f5",
+          color: "#444",
+          cursor: "pointer",
+          userSelect: "none",
+          zIndex: "100  ",
+          pointerEvents: "auto",
+        });
+        badge.addEventListener("mouseenter", () => { badge.textContent = "✕"; });
+        badge.addEventListener("mouseleave", () => { badge.textContent = "Edited"; });
+
+        // NEW 1: 提前在捕获阶段拦住按下事件，避免单元格先进入编辑
+        badge.addEventListener("pointerdown", (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+        }, { capture: true });
+
+        badge.addEventListener("click", async (ev) => {
+          ev.preventDefault(); ev.stopPropagation();
+
+          const colId = fieldToColId[field];
+          // --- DEBUG: log click context ---
+          if (window.DEBUG_EDITED) {
+            console.debug("[EditedDebug] click badge", { entryId, field, colId, knownFields: Object.keys(fieldToColId) });
+          }
+
+          // 强制在解析失败时给出提示，并阻止误删徽标
+          if (!colId) {
+            console.error(`[EditedDebug] Missing column_pk for field="${field}". Known fields:`, Object.keys(fieldToColId));
+            alert(`Cannot unlock: missing backend column id for field "${field}".`);
+            return;
+          }
+          const url = `/values/${encodeURIComponent(entryId)}/${encodeURIComponent(colId)}/edited/`;
+          try {
+            //const res = await fetch(`/values/${encodeURIComponent(entryId)}/${encodeURIComponent(colId)}/edited/`, {
+            const res = await fetch(url, {
+              method: "POST",
+              headers: { "X-CSRFToken": csrftoken, "Content-Type": "application/json" },
+              body: JSON.stringify({ edited: false }),
+            });
+
+
+            const raw = await res.clone().text(); // 先读原文，方便排查 302/HTML 等情况
+            let out = null;
+            try { out = JSON.parse(raw); } catch (_) {}
+
+            if (window.DEBUG_EDITED) {
+              console.debug("[EditedDebug] response", { status: res.status, ok: res.ok, out, rawSnippet: raw?.slice(0, 200) });
+            }
+
+            //if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            //const out = await res.json();
+            if (res.ok && out && out.ok && out.edited === false) {
+              setEdited(entryId, field, false);
+              badge.remove();
+              el.classList.remove("has-edited-badge");
+              el.style.removeProperty("--edited-badge-space");
+            } else {
+              console.warn("unlock failed payload:", out);
+              alert((out && out.error) || "Failed to unlock this cell.");
+            }
+          } catch (e) {
+            console.error("unlock failed", e);
+            alert("Unlock failed: " + e.message);
+          }
+        });
+        // The container must be set to relative positioning to place the absolutely positioned badge
+        //const el = cell.getElement();
+        if (getComputedStyle(el).position === "static") el.style.position = "relative";
+        el.appendChild(badge);
+      }
+      el.classList.add("has-edited-badge");
+      const h = Math.ceil((badge.offsetHeight || 18) + 4);
+      el.style.setProperty("--edited-badge-space", `${h}px`);
+    }
+
+
     const dynamicCols = meta
       ? meta.map(({ id, name }) => {
           const titleText = (name === "file_name") ? "File name" : name;
@@ -152,13 +306,12 @@ function reloadPapers() {
             };
           }
 
-
-
           // Otherwise, follow the original logic (with a delete button)
           return {
             title: titleText,
             field: name,
             editor: "input",
+
             // Render a title and a small button in the column header
             titleFormatter: function(cell, formatterParams, onRendered) {
               // Determine whether the column is protected
@@ -291,13 +444,39 @@ function reloadPapers() {
     table = new Tabulator("#paper-table", {
       height: "80vh",
       data: Array.isArray(payload.rows) ? payload.rows : [],
-      layout: "fitData",
+      layout: "fitColumns",
       renderHorizontal: "virtual",
-      columns
+      variableHeight: true,
+      columns,
+      rowFormatter: function(row) {
+        const cells = row.getCells();
+    
+        cells.forEach(function(cell) {
+          const colDef = cell.getColumn().getDefinition();
+          const field  = colDef && colDef.field;
+    
+          // Skip non-data / special columns
+          if (!field || field === "file_name") return;
+          if (!colDef.editor) return;  // only for editable columns
+    
+          if (window.DEBUG_EDITED) {
+            const entryId = cell.getRow().getData().entry_id;
+            console.debug("[EditedDebug] rowFormatter for cell", {
+              field,
+              entryId,
+              isEditedFlag: isEdited(entryId, field),
+            });
+          }
+    
+          // This will check isEdited(...) internally and add/remove the badge
+          renderEditedBadge(cell);
+        });
+      },
     });
     let reverting = false; //  Placed in module scope
 
     table.on("cellEdited", async function (cell) {
+
       if (reverting) return;  //  Prevent rollback from triggering again
     
       const colDef  = cell.getColumn().getDefinition();
@@ -305,7 +484,7 @@ function reloadPapers() {
       const colId   = fieldToColId[field];  // Retrieve backend column ID via column name
       const rowData = cell.getRow().getData();
       const entryId = rowData.entry_id;
-    
+
       if (!entryId || !colId || field === "file_name") return;
     
       const newVal = cell.getValue();
@@ -316,11 +495,12 @@ function reloadPapers() {
           method: "POST",
           headers: {
             "X-CSRFToken": csrftoken,
-            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+            "Content-Type": "application/json",
           },
-          body: new URLSearchParams({
-            value_text: (newVal ?? "").toString(),
-            note_text: "",  // Leave it empty as before
+          body: JSON.stringify({
+            value: (newVal ?? "").toString(),
+            notes: "",
+            lock_after_save: true
           }),
         });
     
@@ -333,6 +513,29 @@ function reloadPapers() {
           const text = await res.text();
           throw new Error(`HTTP ${res.status}: ${text}`);
         }
+
+        //renderEditedBadge(cell);
+        setEdited(entryId, field, true); 
+        renderEditedBadge(cell);  
+        // NEW: After successful save, explicitly set the lock (the backend also defaults to true, but this explicit call ensures immediate frontend sync)
+        //try {
+          //const res2 = await fetch(`/values/${encodeURIComponent(entryId)}/${encodeURIComponent(colId)}/edited/`, {
+            //method: "POST",
+            //headers: { "X-CSRFToken": csrftoken, "Content-Type": "application/json" },
+            //body: JSON.stringify({ edited: true }),
+          //});
+          //const out2 = await res2.json().catch(() => ({}));
+          //if (res2.ok && out2 && out2.ok) {
+            //setEdited(entryId, field, true);
+            // Re-render the badge (the cell DOM still exists)
+            //renderEditedBadge(cell);
+          //} else {
+            //console.warn("set edited=true failed", res2.status, out2);
+          //}
+        //} catch (e) {
+          //console.warn("set edited=true error", e);
+        //}
+
       } catch (err) {
         console.error("[save cell] failed:", err);
         alert("save failed" + err.message);
@@ -668,12 +871,12 @@ function bindUploadFormAjax() {
 }
 
 // Display answers. Input: llmText = data.llm_text, table = your Tabulator instance
-function applyLlmTextToTabulator(llmText, table) {
+function applyLlmTextToTabulator(llmText, table, isEdited){
   if (!Array.isArray(llmText)) return;
 
   const FILE_COL_TITLE = "File name"; // If  column title differs, change it here
 
-  // 1) 先建 列标题 -> 字段名 映射（title 可能≠ field）
+
   const titleToField = new Map();
   table.getColumns().forEach(col => {
     const def = col.getDefinition();
@@ -682,10 +885,10 @@ function applyLlmTextToTabulator(llmText, table) {
     }
   });
 
-  // 拿到 File name 对应的实际 field 名
+
   const fileField = titleToField.get(FILE_COL_TITLE) || FILE_COL_TITLE;
 
-  // 2) 建立 行索引：filename -> RowComponent
+
   const rowByFilename = new Map();
   table.getRows().forEach(row => {
     const d = row.getData();
@@ -693,7 +896,7 @@ function applyLlmTextToTabulator(llmText, table) {
     if (fname) rowByFilename.set(fname, row);
   });
 
-  // 3) 应用 llm_text 到对应单元格
+
   const filenameFromUrl = (url) => {
     if (!url) return null;
     try { return url.split("/").pop(); } catch { return null; }
@@ -711,10 +914,13 @@ function applyLlmTextToTabulator(llmText, table) {
 
     const q2ans = item.answers_by_question || {};
     const patch = {};
+    const entryId = row.getData().entry_id; // NEW
 
     Object.entries(q2ans).forEach(([questionTitle, answer]) => {
       const field = titleToField.get(questionTitle) || questionTitle;
       if (answer !== undefined && answer !== null) {
+        // NEW: if edited=true, skip
+        if (typeof isEdited === "function" && isEdited(entryId, field)) return;
         patch[field] = (answer === "N/A") ? "" : answer;
       }
     });

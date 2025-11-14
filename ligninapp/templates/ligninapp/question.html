@@ -42,6 +42,27 @@
     box-sizing: border-box;
     overflow: hidden;      /* Delegate internal scrolling to child elements */
   }
+    /* Enable text wrapping in all Tabulator cells */
+  .tabulator-cell {
+    height: auto !important;
+    white-space: normal !important;
+    word-break: break-word !important;
+    overflow-wrap: anywhere !important;
+  }
+  .tabulator-cell.has-edited-badge {
+    padding-bottom: var(--edited-badge-space, 22px) !important;
+  }
+  .cell-edited-badge {
+  display: inline-block;
+  line-height: 16px;
+  height: 18px;
+  }
+
+  /* Reuse your .modal full-screen backdrop; add a spinner keyframe */
+  @keyframes spin { to { transform: rotate(360deg); } }
+  /* Make sure the backdrop itself blocks clicks */
+  .modal { pointer-events: auto; }
+
   </style>
 
   <script>
@@ -64,18 +85,10 @@
   <div>
     <h3>Current Papers</h3>
     <div class="toolbar">
-      <a href="/column/add/?review={{ question_id }}">Create New Column</a>
-      <span class="sep">|</span>
-      <span>Add rows by the "search" tool <a href="#h3-search">below.</a></span>
-      <span class="sep">|</span>
-      <button onclick="toggleFullWidth()">Toggle Full Width</button>
       <button id="btn-upload" onclick="toggleUploadModal(true)">Upload New Paper</button>
-	  <!--8.20 added-->
-		<div style="margin-top: 8px;">
-			<button id="btn-generate" onclick="generateAnswers()">Generate Answers</button>
-		</div>
-	  <!--8.20 added-->
-	  
+      <span class="sep">|</span>
+      <button onclick="location.href='/column/add/?review={{ question_id }}'">Create New Column</button>
+      <button id="btn-generate" onclick="generateAnswers()">Generate Answers</button>
     </div>
     <div id="paper-table-container">
       <div id="paper-table"></div>
@@ -164,6 +177,17 @@
     </div>
   </div>
 
+
+  <!-- Busy/Blocking Modal -->
+  <div id="busyModal" class="modal" aria-modal="true" role="dialog" style="display:none;">
+    <div class="modal-content" style="text-align:center; pointer-events:auto;">
+      <h3 style="margin-top:0;">Generating answers…</h3>
+      <p class="msg">This may take up to a minute. Please wait.</p>
+      <!-- Simple throbber -->
+      <div style="margin-top:12px; display:inline-block; width:28px; height:28px; border:3px solid #ddd; border-top-color:#555; border-radius:50%; animation:spin 0.9s linear infinite;"></div>
+    </div>
+  </div>
+
   <script>
 
     // obtain the Tabulator instance
@@ -216,44 +240,56 @@
       // 3) Send to backend
       const endpoint = `/question/${encodeURIComponent(questionID)}/generate-request-accept/`;
 
-      try {
-        const res = await fetch(endpoint, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-CSRFToken": (window.Cookies && Cookies.get("csrftoken")) || "",
-          },
-          body: JSON.stringify({
-            columns: columnsObj,
-            urls: urlsObj,
-          }),
-        });
+      const btn = document.getElementById("btn-generate");
 
-        if (!res.ok) {
-          const text = await res.text();
-          throw new Error(`HTTP ${res.status}: ${text}`);
-        }
+  try {
+    //Block UI
+    if (btn) btn.disabled = true;              // disable trigger
+    showBusy("Generating answers… Please wait."); // show modal overlay
 
-        const data = await res.json();
-        console.log("server response:", data);
+    //Send request
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": (window.Cookies && Cookies.get("csrftoken")) || "",
+      },
+      body: JSON.stringify({ columns: columnsObj, urls: urlsObj }),
+    });
 
-        if (data.ok) {
-          //Directly print the LLM string returned by the backend to the browser console
-          console.log("[LLM text]:", data.llm_text);
-          const tableInst = getPaperTable();
-          if (window.applyLlmTextToTabulator && tableInst) {
-            window.applyLlmTextToTabulator(data.llm_text, tableInst);
-          } else {
-            console.warn("applyLlmTextToTabulator or table instance not ready");
-          }
-        } else {
-          console.error("Server error:", data.error);
-        }
-      } catch (err) {
-        console.error("generateAnswers request failed:", err);
-        alert("Request failed: " + err.message);
-      }
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`HTTP ${res.status}: ${text}`);
     }
+
+    const data = await res.json();
+    console.log("server response:", data);
+
+    if (data.ok) {
+      console.log("[LLM text]:", data.llm_text);
+      const tableInst = getPaperTable();
+      if (window.applyLlmTextToTabulator && tableInst) {
+        window.applyLlmTextToTabulator(
+          data.llm_text,
+          tableInst,
+          (window.isEdited || (() => false))
+        );
+      } else {
+        console.warn("applyLlmTextToTabulator or table instance not ready");
+      }
+    } else {
+      console.error("Server error:", data.error);
+      alert("Server error: " + (data.error || "unknown"));
+  }
+  } catch (err) {
+    console.error("generateAnswers request failed:", err);
+    alert("Request failed: " + err.message);
+  } finally {
+    //Always unblock UI
+    hideBusy();
+    if (btn) btn.disabled = false;
+    }
+  }
 
     function toggleUploadModal(show) {
       const modal = document.getElementById("uploadModal");

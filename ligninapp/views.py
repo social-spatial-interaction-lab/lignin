@@ -24,6 +24,7 @@ from django.contrib import messages
 from django.db import transaction
 import os
 from urllib.parse import unquote
+from django.views.decorators.csrf import csrf_exempt
 
 from .LLM_response import LLM_entrance
 
@@ -48,6 +49,17 @@ def get_question(request, question_id):
         "question_id": question_id
     })
 
+def _get_value_by_ids(entry_id: int, column_pk: int, create_if_missing: bool = False):
+    entry = get_object_or_404(Entry, pk=entry_id)
+    column = get_object_or_404(Column, pk=column_pk)
+    try:
+        val = Value.objects.get(entry=entry, column=column)
+    except Value.DoesNotExist:
+        if not create_if_missing:
+            return entry, column, None
+        val = Value.objects.create(entry=entry, column=column, creator=None, value="", notes="", highlights=None)
+    return entry, column, val
+
 
 class ReviewCreate(PermissionRequiredMixin, CreateView):
     model = Review
@@ -63,34 +75,52 @@ class ReviewCreate(PermissionRequiredMixin, CreateView):
 
 
 class NewColumnForm(forms.Form):
-    name = forms.CharField(max_length=200)
-    review_to_add_to = forms.IntegerField(widget = forms.HiddenInput(), required = False)
+    name = forms.CharField(
+        label="Column name (a summary for this question)",
+        max_length=200
+    )
+    description = forms.CharField(
+        label="Description (the question it self)",
+        widget=forms.Textarea(attrs={"rows": 4}),
+        required=False
+    )
+    review_to_add_to = forms.ModelChoiceField(
+        queryset=Review.objects.all(),
+        widget=forms.HiddenInput()
+    )
 
 
 def create_column(request):
-    # if this is a POST request we need to process the form data
+    """
+    Render the 'create column' form on GET.
+    On POST, create a Column with name + description, then attach it to the target Review.
+    NOTE: This view expects NewColumnForm (Form version) with fields:
+          - name (CharField)
+          - description (CharField, optional)
+          - review_to_add_to (ModelChoiceField, HiddenInput)
+    """
     if request.method == "POST":
-        # create a form instance and populate it with data from the request:
         form = NewColumnForm(request.POST)
-        # check whether it's valid:
         if form.is_valid():
-            # process the data in form.cleaned_data as required
+            # Create the Column with the new 'description' field.
+            column = Column.objects.create(
+                name=form.cleaned_data["name"],
+                description=form.cleaned_data.get("description", ""),
+            )
 
-            # Create the new column
-            col = Column.objects.create(name=form.cleaned_data['name'])
-            col.save()
-            # add the column to the review
-            review = Review.objects.get(pk=form.cleaned_data['review_to_add_to'])
-            review.columns.add(col)
-            review.save()
+            # Attach to the specified Review (if provided).
+            review = form.cleaned_data["review_to_add_to"]
+            if review:
+                review.columns.add(column)
 
-            # redirect to the review
+            # Redirect back to the review page (keeps old behavior).
             return HttpResponseRedirect(review.get_absolute_url())
-
-    # if a GET (or any other method) we'll create a blank form
     else:
-        form = NewColumnForm(initial={"review_to_add_to": int(request.GET['review'])})
+        # Pre-fill the hidden review_to_add_to from the querystring (?review=<id>)
+        review_id = request.GET.get("review")
+        form = NewColumnForm(initial={"review_to_add_to": review_id})
 
+    # Render the same template as before.
     return render(request, "ligninapp/column_form.html", {"form": form})
 
 
@@ -135,7 +165,6 @@ def add_paper(request, question_id, paper_id):
 
     return HttpResponse(status=201)
 
-#10.20 column-delete  
 def get_papers(request, question_id):
     review = get_object_or_404(Review, id=question_id)
 
@@ -150,50 +179,127 @@ def get_papers(request, question_id):
         .prefetch_related(
             Prefetch(
                 "value_set",
-                queryset=Value.objects.filter(column_id__in=col_ids).only("column_id", "value"),
+                # NEW: Prefetch the 'edited' field as well to avoid N+1 queries later
+                queryset=Value.objects.filter(column_id__in=col_ids).only("column_id", "value", "edited"),
             )
         )
         .only("id")
     )
 
     rows = []
+    edited_map = {}  # NEW: { "<entry_id>": { "<column_name>": true, ... }, ... }
+
     for entry in entries_qs:
         row = {"entry_id": entry.id}
         for name in col_names:
             row[name] = ""
+        # NEW: Prepare a sparse dictionary for this entry's 'edited' state (record only True; default is treated as False)
+        emap_for_entry = {}
+
         for v in entry.value_set.all():
             name = col_id_to_name.get(v.column_id)
             if name:
                 row[name] = v.value or ""
+                # NEW: If this cell is locked by the user, record it as True (frontend defaults to False)
+                if getattr(v, "edited", False):
+                    emap_for_entry[name] = True
+
+        if emap_for_entry:
+            # Write only if there is any True value to reduce payload; frontend can treat missing ones as False
+            edited_map[str(entry.id)] = emap_for_entry
+
         rows.append(row)
 
     payload = {
         "columns": col_names,  # Compatible with the old frontend
         "columns_meta": [{"id": cid, "name": name} for cid, name in columns],
         "rows": rows,
+        # NEW: Allow the frontend to render the “Edited” badge immediately upon initialization
+        "edited_map": edited_map,
     }
     return JsonResponse(payload, safe=False)
 
 
 
+
 @require_POST
 def edit_annotation(request, entry_id, column_pk):
-    value_text = request.POST.get("value_text", "")
-    # note_text = request.POST.get("note_text", "")
+    """
+    User edits a cell from the frontend: always allow writing, 
+    and (by default) set edited=True.
+    Optional parameter: lock_after_save (bool, default True)
+    Body: {"value": "...", "notes": "...", "lock_after_save": true/false}
+    """
+    # --- DEBUG START ---
+    try:
+        raw_body = request.body.decode("utf-8")
+    except Exception as e:
+        raw_body = f"<decode error: {e}>"
+    logger.info(f"[edit_annotation] raw_body={raw_body} entry_id={entry_id} column_pk={column_pk}")
+    # --- DEBUG END ---
+    try:
+        payload = json.loads(request.body.decode("utf-8")) if request.body else {}
+    except json.JSONDecodeError:
+        return JsonResponse({"ok": False, "error": "Invalid JSON."}, status=400)
 
-    entry  = get_object_or_404(Entry, id=entry_id)
-    column = get_object_or_404(Column, pk=column_pk)
+    new_value = payload.get("value", "")
+    new_notes = payload.get("notes", None)
+    lock_after_save = payload.get("lock_after_save", True)
 
-    # First try to locate an existing value while ignoring the creator; if none exists, create one
-    value = Value.objects.filter(entry=entry, column=column).order_by("-id").first()
-    if value is None:
-        value = Value(entry=entry, column=column)  # No longer dependent on LigninUser/creator
+    entry, column, val = _get_value_by_ids(entry_id, column_pk, create_if_missing=True)
+    # User edit: always allow writing value/notes; 
+    # the 'edited' flag does not block user edits
+    val.value = new_value
+    if new_notes is not None:
+        val.notes = new_notes
 
-    value.value = value_text
-    # value.notes = note_text
-    value.save()
-    return HttpResponse(status=204)
+    if lock_after_save:
+        val.edited = True
 
+    logger.info(f"[edit_annotation] entry={entry_id} col={column_pk} lock_after_save={lock_after_save} -> edited will be {True if lock_after_save else val.edited}")
+    val.save(update_fields=["value", "notes", "edited"] if new_notes is not None else ["value", "edited"])
+
+    return JsonResponse({
+        "ok": True,
+        "entry_id": entry.id,
+        "column_pk": column.pk,
+        "value": val.value,
+        "notes": val.notes,
+        "edited": val.edited,
+    })
+
+@require_POST
+def set_value_edited(request, entry_id, column_pk):
+    """
+    set the edited flag as True or False
+    Body: {"edited": true/false}
+    success return: {"ok": true, "entry_id": ..., "column_pk": ..., "edited": ...}
+    """
+    print("1")
+    try:
+        payload = json.loads(request.body.decode("utf-8")) if request.body else {}
+    except json.JSONDecodeError:
+        return JsonResponse({"ok": False, "error": "Invalid JSON."}, status=400)
+
+    if "edited" not in payload or not isinstance(payload["edited"], bool):
+        return JsonResponse({"ok": False, "error": "Field 'edited' (bool) is required."}, status=400)
+
+    entry, column, val = _get_value_by_ids(entry_id, column_pk, create_if_missing=True)
+
+    
+    logger.info(f"[set_value_edited] entry={entry_id} col={column_pk} payload={payload}")
+    prev = val.edited
+    val.edited = payload["edited"]
+    val.save(update_fields=["edited"])
+    logger.info(f"[set_value_edited] entry={entry_id} col={column_pk} edited {prev} -> {val.edited}")
+
+
+    return JsonResponse({
+        "ok": True,
+        "entry_id": entry.id,
+        "column_pk": column.pk,
+        "edited": val.edited,
+    })
 
 
 def reject_paper(request, question_id, paper_id):
@@ -416,25 +522,84 @@ def register(request):
 def generate_request_accept_view(request, question_id):
     try:
         payload = json.loads(request.body.decode("utf-8"))
-        columns_obj = payload.get("columns", {})
-        urls_obj = payload.get("urls", {})
+        columns_obj = payload.get("columns", {}) or {}
+        urls_obj    = payload.get("urls", {})    or {}
 
-        # 1) Call the LLM
-        results_per_url = LLM_entrance(columns_obj, urls_obj, include_highlights=True)
+        # --- NEW: Build columns_obj from Column.description instead of raw frontend names ---
+        #  Extract column names (keep order)
+        incoming_names = []
+        raw_list = columns_obj.get("columns", []) or []
+        for n in raw_list:
+            s = (n or "").strip()
+            if not s:
+                continue
+            # Skip reserved/internal columns
+            if s in {"file_name", "File name", "Entry ID"}:
+                continue
+            incoming_names.append(s)
+
+        #  Query Column by name (single pass)
+        #    Build a mapping: name -> Column
+        found_cols = {c.name: c for c in Column.objects.filter(name__in=incoming_names).only("name", "description", "column_info")}
+
+        #  Assemble descriptions in the SAME order as incoming_names
+        #    Fallback: description -> column_info -> name
+        desc_list = []
+        for name in incoming_names:
+            col = found_cols.get(name)
+            if col is not None:
+                desc = (col.description or col.column_info or name) or ""
+            else:
+                # Not found in DB (unexpected): fall back to the original name
+                desc = name
+            desc_list.append(desc.strip())
+
+        # Build the final columns payload for LLM
+        columns_for_llm = {"columns": desc_list}
+
+        # === Call the LLM with descriptions instead of raw names ===
+        results_per_url = LLM_entrance(columns_for_llm, urls_obj, include_highlights=True)
 
         # 2) Split (for frontend compatibility)
         qa_only, highlights_only = [], []
-        for item in results_per_url:
+        # helper: map description to Column.name (prefer cache if present)
+        def _desc_to_name(desc: str) -> str | None:
+            key = (desc or "").strip()
+            if not key:
+                return None
+            # if you created desc_to_col earlier (in persist_answers or above), reuse it
+            col = (desc_to_col.get(key) if 'desc_to_col' in locals() else None)
+            if col is None:
+                col = Column.objects.filter(description=key).only("name").first()
+            return (col.name if col else None)
+
+        for item in (results_per_url or []):
             qa_payload = (item or {}).get("qa", {}) or {}
             hl_payload = (item or {}).get("highlights", None)
-            qa_only.append(qa_payload)
+
+            abq = qa_payload.get("answers_by_question") or {}
+            mapped = {}
+            for k_desc, v in abq.items():
+                k_name = _desc_to_name(k_desc)
+                if k_name:
+                    mapped[k_name] = v
+                # else: skip unmapped keys (or fallback to keep description if you prefer)
+
+            qa_only.append({
+                **qa_payload,
+                "answers_by_question": mapped,
+            })
             highlights_only.append(hl_payload)
 
         llm_text = qa_only
 
         # 3) Write answers into EAV (only answers, do not handle highlights)
         review = get_object_or_404(Review, id=question_id)
-
+        desc_to_col = {}
+        for c in review.columns.only("id", "name", "description", "column_info"):
+            key = (c.description or c.column_info or c.name or "").strip()
+            if key:
+                desc_to_col[key] = c
         # Column "file_name" used for locating the row (note: column name is "file_name")
         file_name_col, _ = Column.objects.get_or_create(name="file_name")
         # If this column is not yet in the review’s column set, add it
@@ -450,8 +615,46 @@ def generate_request_accept_view(request, question_id):
         except Exception:
             creator = None
 
+        skipped_locked = []  # NEW: Record cells skipped due to edited=True, for frontend notification/debugging
+
         @transaction.atomic
         def persist_answers():
+            # Build a description -> Column cache for the current review
+            # (fallback to column_info or name if description is empty)
+            desc_to_col = {}
+            for c in review.columns.only("id", "name", "description", "column_info"):
+                key = (c.description or c.column_info or c.name or "").strip()
+                if key:
+                    desc_to_col[key] = c
+
+            def resolve_column_by_desc(desc_key: str) -> Column:
+                """
+                Resolve a Column by its description (fallback to column_info/name).
+                If not found, create one (name = description for now) and add to current review.
+                """
+                key = (desc_key or "").strip()
+                if not key:
+                    return None
+
+                # 1) try current review cache
+                col = desc_to_col.get(key)
+                if col is not None:
+                    return col
+
+                # 2) try global columns by exact description
+                col = Column.objects.filter(description=key).only("id", "name", "description").first()
+                if col is None:
+                    # 3) create a new column; use description as both name and description
+                    col = Column.objects.create(name=key, description=key)
+
+                # ensure it belongs to this review
+                if not review.columns.filter(pk=col.pk).exists():
+                    review.columns.add(col)
+
+                # cache it
+                desc_to_col[key] = col
+                return col
+
             for item in (results_per_url or []):
                 qa = (item or {}).get("qa", {}) or {}
                 hl = (item or {}).get("highlights", {}) or {}
@@ -459,7 +662,7 @@ def generate_request_accept_view(request, question_id):
                 if not url:
                     continue
 
-                # URL -> filename (decode %20, etc.
+                # URL -> filename (decode %20, etc.)
                 base = os.path.basename(url)
                 filename = unquote(base).strip()
                 if not filename:
@@ -480,32 +683,39 @@ def generate_request_accept_view(request, question_id):
                 if not isinstance(answers_by_q, dict) or not answers_by_q:
                     continue
 
-                # Preload the two tables "question -> highlights" for this URL (for writing highlights per question)
+                # Preload the two tables "question(desc) -> highlights" for this URL
                 anchors_by_q   = hl.get("anchors_by_question")   or {}
                 locations_by_q = hl.get("locations_by_question") or {}
                 doc_info       = hl.get("doc")                   or {}
 
-                # Write answers for each "question column name"
-                for question_title, answer in answers_by_q.items():
-                    col_name = (question_title or "").strip()
-                    if not col_name:
+                # Write answers for each "question description"
+                for desc_key, answer in answers_by_q.items():
+                    desc_key = (desc_key or "").strip()
+                    if not desc_key:
                         continue
-                    # Skip reserved column names
-                    if col_name in {"File name", "file_name", "Entry ID"}:
+                    # Skip reserved/internal identifiers if they appear
+                    if desc_key in {"File name", "file_name", "Entry ID"}:
                         continue
 
-                    column, _ = Column.objects.get_or_create(name=col_name)
-                    # Ensure the column belongs to the current review
-                    if not review.columns.filter(pk=column.pk).exists():
-                        review.columns.add(column)
+                    # Use description to resolve the column
+                    column = resolve_column_by_desc(desc_key)
+                    if column is None:
+                        continue
 
-                    # Save or update the Value (simple strategy: overwrite if it already exists)
+                    # Save or update the Value (overwrite if it already exists)
                     val_obj = (
                         Value.objects
                         .filter(entry_id=entry_id, column=column)
                         .order_by("-id")
                         .first()
                     )
+
+                    # If an existing cell is locked by the user, skip overwriting
+                    if val_obj is not None and getattr(val_obj, "edited", False) is True:
+                        skipped_locked.append({"entry_id": entry_id, "column": column.name})
+                        continue
+
+                    # Create if missing (default edited=False)
                     if val_obj is None:
                         val_obj = Value(entry_id=entry_id, column=column, creator=creator)
 
@@ -515,9 +725,9 @@ def generate_request_accept_view(request, question_id):
 
                     val_obj.value = safe_answer
 
-                    locs = locations_by_q.get(col_name) or []
+                    # Handle highlights using the same description key
+                    locs = locations_by_q.get(desc_key) or []
                     rects_all = []
-
                     for loc in locs:
                         occs = loc.get("occurrences") or []
                         for occ in occs:
@@ -532,10 +742,13 @@ def generate_request_accept_view(request, question_id):
                                     "rect": r,
                                 })
 
-                    # Keep only pure coordinate arrays
                     val_obj.highlights = rects_all
                     val_obj.save()
-                    logger.warning("[HIGHLIGHT SAVED] review=%s entry=%s col=%r highlights=%r", review.id, entry_id, col_name, val_obj.highlights)
+                    logger.warning(
+                        "[HIGHLIGHT SAVED] review=%s entry=%s col(name)=%r via desc=%r highlights=%r",
+                        review.id, entry_id, column.name, desc_key, val_obj.highlights
+                    )
+
         persist_answers()
 
         # 4) Normal return (compatible with old frontend + new structure)
@@ -547,6 +760,7 @@ def generate_request_accept_view(request, question_id):
             "results": results_per_url,
             "qa": qa_only,
             "highlights": highlights_only,
+            "skipped_locked": skipped_locked,  # NEW: Returned to frontend to indicate which cells were locked and not updated
         }, status=200)
 
     except Exception as e:

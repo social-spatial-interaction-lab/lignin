@@ -67,14 +67,20 @@ class Entry(RulesModel):
 
 class Column(RulesModel):
     name = models.CharField(max_length=200)
-    default_permission = models.CharField(choices=PermissionEnum.choices, max_length=5, default="MOD")
+    default_permission = models.CharField(
+        choices=PermissionEnum.choices, max_length=5, default="MOD"
+    )
     column_info = models.TextField(blank=True, null=False)
+
+    # NEW: human-readable description of the question/column
+    description = models.TextField(blank=True, null=True)  # allow-null for smooth migration
 
     def __str__(self):
         return self.name
 
     def get_absolute_url(self):  # new
         return reverse('', args=[str(self.id)])
+
 
 
 rules.add_perm('ligninapp.add_column', rules.is_authenticated)
@@ -109,7 +115,8 @@ class Value(RulesModel):
     value = models.CharField(max_length=1000)
     notes = models.TextField(blank=True)
     highlights = models.JSONField(blank=True, null=True)
-
+    edited = models.BooleanField(default=False, help_text="If True, block LLM updates for this cell; user edits still allowed.")
+    
     def __str__(self):
         return f"{self.column} for {self.entry}: {self.value}"
     

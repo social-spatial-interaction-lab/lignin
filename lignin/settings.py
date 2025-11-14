@@ -154,3 +154,26 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,  # Keep Django’s own logging
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+        },
+    },
+    "loggers": {
+        # Your app's logger
+        "ligninapp": {
+            "handlers": ["console"],
+            "level": "INFO",      # You can also set to DEBUG for more detail
+            "propagate": False,
+        },
+        # Root logger (optional, ensures any logger prints)
+        "": {
+            "handlers": ["console"],
+            "level": "INFO",
+        },
+    },
+}

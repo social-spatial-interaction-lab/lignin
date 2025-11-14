@@ -1,22 +1,32 @@
-{% load static %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>Create Review</title>
-    <link rel="stylesheet" href="{% static 'ligninapp/style.css' %}">
+  <meta charset="UTF-8">
+  <title>New Column (Question)</title>
 </head>
 <body>
-    <div class="modal-box">
-        <h2>Review Title</h2>
-        <form method="post" enctype="multipart/form-data">
-            {% csrf_token %}
-            {{ review_form.question_text }}
-            <div class="button-row">
-                <a href="/" class="btn cancel">Cancel</a>
-                <button type="submit" class="btn create">Create Review</button>
-            </div>
-        </form>
+  <h1>New Column (Question)</h1>
+
+  <form action="{% url 'column-create' %}" method="post">
+    {% csrf_token %}
+    <!-- Keep review_to_add_to hidden -->
+    {{ form.review_to_add_to }}
+
+    <!-- 2) Rename the label for name -->
+    <div>
+      <label for="{{ form.name.id_for_label }}">Column name (a summary for this question)</label><br>
+      {{ form.name }}
+      {% if form.name.errors %}<div class="error">{{ form.name.errors }}</div>{% endif %}
     </div>
+
+    <!-- 3) New input element: Description (the question it self) -->
+    <div>
+      <label for="{{ form.description.id_for_label }}">Description (the question it self)</label><br>
+      {{ form.description }}
+      {% if form.description.errors %}<div class="error">{{ form.description.errors }}</div>{% endif %}
+    </div>
+
+    <input type="submit" value="Submit">
+  </form>
 </body>
 </html>
