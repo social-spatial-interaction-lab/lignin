@@ -28,6 +28,6 @@ urlpatterns = [
     path('review/<int:review_id>/entries/<int:entry_id>/highlights/', views.get_entry_highlights, name='get-entry-highlights'),
     path('values/<entry_id>/<int:column_pk>/edited/', views.set_value_edited, name='set-value-edited'),
 
-    
+    path("review/<int:review_id>/entries/<int:entry_id>/qa/",views.entry_qa_view, name="entry_qa",),
 
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

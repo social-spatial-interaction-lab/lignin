@@ -199,7 +199,7 @@ function reloadPapers() {
         badge.addEventListener("mouseenter", () => { badge.textContent = "✕"; });
         badge.addEventListener("mouseleave", () => { badge.textContent = "Edited"; });
 
-        // NEW 1: 提前在捕获阶段拦住按下事件，避免单元格先进入编辑
+
         badge.addEventListener("pointerdown", (ev) => {
           ev.preventDefault();
           ev.stopPropagation();
@@ -214,7 +214,7 @@ function reloadPapers() {
             console.debug("[EditedDebug] click badge", { entryId, field, colId, knownFields: Object.keys(fieldToColId) });
           }
 
-          // 强制在解析失败时给出提示，并阻止误删徽标
+
           if (!colId) {
             console.error(`[EditedDebug] Missing column_pk for field="${field}". Known fields:`, Object.keys(fieldToColId));
             alert(`Cannot unlock: missing backend column id for field "${field}".`);
@@ -230,7 +230,7 @@ function reloadPapers() {
             });
 
 
-            const raw = await res.clone().text(); // 先读原文，方便排查 302/HTML 等情况
+            const raw = await res.clone().text();
             let out = null;
             try { out = JSON.parse(raw); } catch (_) {}
 
@@ -432,9 +432,6 @@ function reloadPapers() {
     };
         
 
-
-
-    
     const columns = [
       deleteColumn,
       { title: "Entry ID", field: "entry_id", visible: false },
@@ -517,24 +514,6 @@ function reloadPapers() {
         //renderEditedBadge(cell);
         setEdited(entryId, field, true); 
         renderEditedBadge(cell);  
-        // NEW: After successful save, explicitly set the lock (the backend also defaults to true, but this explicit call ensures immediate frontend sync)
-        //try {
-          //const res2 = await fetch(`/values/${encodeURIComponent(entryId)}/${encodeURIComponent(colId)}/edited/`, {
-            //method: "POST",
-            //headers: { "X-CSRFToken": csrftoken, "Content-Type": "application/json" },
-            //body: JSON.stringify({ edited: true }),
-          //});
-          //const out2 = await res2.json().catch(() => ({}));
-          //if (res2.ok && out2 && out2.ok) {
-            //setEdited(entryId, field, true);
-            // Re-render the badge (the cell DOM still exists)
-            //renderEditedBadge(cell);
-          //} else {
-            //console.warn("set edited=true failed", res2.status, out2);
-          //}
-        //} catch (e) {
-          //console.warn("set edited=true error", e);
-        //}
 
       } catch (err) {
         console.error("[save cell] failed:", err);
@@ -545,39 +524,10 @@ function reloadPapers() {
   }, 'json');
 }
 
-function renderQATable(answerList) {
-  const qaList = document.getElementById("qa-list");
-  if (!qaList) return;
-  qaList.innerHTML = "";
-  if (!answerList.length) {
-    qaList.innerHTML = "<p class='muted'>No answers generated.</p>";
-    return;
-  }
-  const table = document.createElement("table");
-  table.style.width = "100%";
-  table.style.borderCollapse = "collapse";
-  table.innerHTML = `
-    <thead>
-      <tr>
-        <th style="text-align: left; padding: 8px;">Question</th>
-        <th style="text-align: left; padding: 8px;">Answer</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${answerList.map(entry => `
-        <tr>
-          <td style="padding: 8px; vertical-align: top;">${entry.question}</td>
-          <td style="padding: 8px; vertical-align: top;">${entry.answer}</td>
-        </tr>
-      `).join('')}
-    </tbody>
-  `;
-  qaList.appendChild(table);
-}
+
 
 function openPaperModal({ id, url, name, abstract = "" }) {
   document.getElementById("paperModalTitle").textContent = name || "Paper";
-  document.getElementById("paperAbstract").textContent = abstract || "No abstract provided.";
   const absUrl = /^https?:\/\//i.test(url) ? url : `${window.location.origin}${url}`;
   const viewerUrl = `${STATIC_BASE}ligninapp/pdfjs/web/viewer.html?file=${encodeURIComponent(absUrl)}#zoom=page-width`;
   const viewer = document.getElementById("paperViewer");
@@ -591,6 +541,118 @@ function openPaperModal({ id, url, name, abstract = "" }) {
   }
   input.value = id || "";
   document.getElementById("paperModal").style.display = "block";
+  // === Left pane: reset QA area and show loading ===
+  const qaContainer = document.getElementById("paperModalQa");
+  if (qaContainer) {
+    // Clear any previous content
+    qaContainer.innerHTML = "";
+
+    // Show a lightweight loading placeholder
+    const loadingBlock = document.createElement("div");
+    loadingBlock.className = "qa-block";
+    const p = document.createElement("p");
+    p.className = "qa-empty-text";
+    p.textContent = "Loading...";
+    loadingBlock.appendChild(p);
+    qaContainer.appendChild(loadingBlock);
+  }
+
+  // Column -> highlight list index for this entry (built from /highlights/ payload)
+  let columnHighlightIndex = {};
+
+  function getColumnHighlightList(colKey) {
+    if (!colKey) return [];
+    const idx = columnHighlightIndex || {};
+    const list = idx[colKey];
+    return Array.isArray(list) ? list : [];
+  }
+
+  function syncQaButtonsWithHighlights() {
+    if (!qaContainer) return;
+    const buttons = qaContainer.querySelectorAll(".qa-show-source[data-col-key]");
+    buttons.forEach(btn => {
+      const key = btn.getAttribute("data-col-key") || "";
+      const hasHighlight = getColumnHighlightList(key).length > 0;
+      btn.disabled = !hasHighlight;
+      btn.title = hasHighlight
+        ? "Show source text in PDF"
+        : "No source text available for this column.";
+    });
+  }
+
+  function jumpToHighlight(colKey) {
+    const iframe = document.getElementById("paperViewer");
+    if (!iframe || !iframe.contentWindow) {
+      console.warn("[QA] jumpToHighlight: iframe not ready");
+      return;
+    }
+    const win = iframe.contentWindow;
+    const app = win.PDFViewerApplication;
+    if (!app || !app.pdfViewer) {
+      console.warn("[QA] jumpToHighlight: PDF.js application not ready");
+      return;
+    }
+    const viewer = app.pdfViewer;
+
+    const list = getColumnHighlightList(colKey);
+    if (!list.length) {
+      console.warn("[QA] jumpToHighlight: no highlight for column", colKey);
+      return;
+    }
+
+    const totalPages = viewer._pages?.length || app.pdfDocument?.numPages || 0;
+    let target = null;
+    for (const item of list) {
+      if (!item || !Array.isArray(item.rect) || item.rect.length < 4) continue;
+      let p = Number(item.page);
+      if (!Number.isFinite(p)) continue;
+      let pageIndex;
+      if (p >= 1 && p <= totalPages) pageIndex = p - 1;          // 1-based
+      else if (p >= 0 && p < totalPages) pageIndex = p;          // 0-based
+      else continue;
+      target = { pageIndex, rect: item.rect.slice(0, 4) };
+      break;
+    }
+    if (!target) {
+      console.warn("[QA] jumpToHighlight: could not resolve page for column", colKey);
+      return;
+    }
+
+    const pv = viewer.getPageView(target.pageIndex);
+    if (!pv || !pv.div) {
+      if (app.pdfLinkService && typeof app.pdfLinkService.goToPage === "function") {
+        app.pdfLinkService.goToPage(target.pageIndex + 1);
+      }
+      return;
+    }
+
+    const viewport = pv.viewport;
+    const vr = viewport.convertToViewportRectangle(target.rect);
+    const x = Math.min(vr[0], vr[2]);
+    const y = Math.min(vr[1], vr[3]);
+
+    const host = pv.div.querySelector(".textLayer") || pv.div;
+    const doc = host.ownerDocument;
+    const view = doc.defaultView || win;
+
+    if (view.getComputedStyle(host).position === "static") {
+      host.style.position = "relative";
+    }
+
+    let anchor = host.querySelector(".qa-jump-anchor");
+    if (!anchor) {
+      anchor = doc.createElement("div");
+      anchor.className = "qa-jump-anchor";
+      anchor.style.cssText = "position:absolute;width:1px;height:1px;pointer-events:none;opacity:0;z-index:8";
+      host.appendChild(anchor);
+    }
+
+    anchor.style.left = `${x}px`;
+    anchor.style.top  = `${y}px`;
+
+    anchor.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
+  
   // 1) Retrieve the highlights for this row
   async function fetchEntryHighlights(reviewId, entryId) {
     const res = await fetch(`/review/${encodeURIComponent(reviewId)}/entries/${encodeURIComponent(entryId)}/highlights/`, {
@@ -711,7 +773,121 @@ function openPaperModal({ id, url, name, abstract = "" }) {
   }
   
   
+  // === QA API helpers (left pane) ===
+  async function fetchEntryQa(reviewId, entryId) {
+    // Fetch QA data for this entry
+    const res = await fetch(
+      `/review/${encodeURIComponent(reviewId)}/entries/${encodeURIComponent(entryId)}/qa/`,
+      {
+        method: "GET",
+        headers: { "X-CSRFToken": csrftoken },
+      }
+    );
 
+    if (!res.ok) {
+      // Try to read text for more context, but don't fail if that throws
+      let msg = `HTTP ${res.status}`;
+      try {
+        const txt = await res.text();
+        if (txt) msg = `${msg}: ${txt}`;
+      } catch (e) {}
+      throw new Error(msg);
+    }
+
+    return await res.json();
+  }
+
+  function renderQa(container, payload) {
+    if (!container) return;
+
+    // Clear the loading placeholder
+    container.innerHTML = "";
+
+    // Handle error-ish payloads
+    if (!payload || payload.ok === false) {
+      const msg =
+        (payload && payload.error) ? String(payload.error) : "Unknown error";
+
+      const errDiv = document.createElement("div");
+      errDiv.className = "qa-error";
+      errDiv.textContent = `Failed to load QA data: ${msg}`;
+      container.appendChild(errDiv);
+      return;
+    }
+
+    const items = Array.isArray(payload.data) ? payload.data : [];
+
+    if (!items.length) {
+      const block = document.createElement("div");
+      block.className = "qa-block";
+
+      const p = document.createElement("p");
+      p.className = "qa-empty-text";
+      p.textContent = "No QA data for this entry.";
+      block.appendChild(p);
+
+      container.appendChild(block);
+      return;
+    }
+
+    // Render each QA row
+    items.forEach(item => {
+      const block = document.createElement("div");
+      block.className = "qa-block";
+
+      // Title: column.name
+      const titleEl = document.createElement("h3");
+      titleEl.className = "qa-title";
+      titleEl.textContent = item.name || "(Untitled)";
+      block.appendChild(titleEl);
+
+      // Optional description
+      if (item.description) {
+        const descEl = document.createElement("p");
+        descEl.className = "qa-description";
+        descEl.textContent = item.description;
+        block.appendChild(descEl);
+      }
+
+      // "Show source text" button (jump to highlight in PDF viewer)
+      const sourceBtn = document.createElement("button");
+      sourceBtn.type = "button";
+      sourceBtn.className = "qa-show-source";
+      const colKey = item.name || "";
+      sourceBtn.setAttribute("data-col-key", colKey);
+      sourceBtn.textContent = "Show source text";
+
+      const hasHighlight = getColumnHighlightList(colKey).length > 0;
+      sourceBtn.disabled = !hasHighlight;
+      sourceBtn.title = hasHighlight
+        ? "Show source text in PDF"
+        : "No source text available for this column.";
+
+      sourceBtn.addEventListener("click", () => {
+        if (sourceBtn.disabled) return;
+        jumpToHighlight(colKey);
+      });
+
+      block.appendChild(sourceBtn);
+
+      // Answer text (or placeholder)
+      const answerEl = document.createElement("p");
+      if (item.value) {
+        answerEl.className = "qa-answer";
+        answerEl.textContent = item.value;
+      } else {
+        answerEl.className = "qa-empty-text";
+        answerEl.textContent = "No answer.";
+      }
+      block.appendChild(answerEl);
+
+      container.appendChild(block);
+    });
+
+    // In case highlights arrived before QA, ensure buttons reflect latest state
+    syncQaButtonsWithHighlights();
+  }
+  
   // === Place at the end of openPaperModal: fetch and inject after iframe onload ===
   const once = (node, type) =>
     new Promise(resolve => node.addEventListener(type, function h(e){ node.removeEventListener(type, h); resolve(e); }));
@@ -730,15 +906,60 @@ function openPaperModal({ id, url, name, abstract = "" }) {
       });
 
       const payload = await fetchEntryHighlights(questionID, id);
-      if (!payload.ok) throw new Error(payload.error || "highlight fetch failed");
+      if (!payload || payload.ok === false) {
+        const msg = (payload && payload.error) ? payload.error : "highlight fetch failed";
+        throw new Error(msg);
+      }
 
-      console.log("[HL] will fetch & inject for entry", id);
-      await injectHighlightsIntoPdfViewer(viewer, payload.by_column || {});
+      const byColumn = payload.by_column || {};
+      columnHighlightIndex = {};
+      Object.entries(byColumn).forEach(([col, list]) => {
+        if (!col) return;
+        const arr = Array.isArray(list) ? list : [];
+        const normalized = arr.filter(it =>
+          it &&
+          Array.isArray(it.rect) &&
+          it.rect.length >= 4 &&
+          Number.isFinite(Number(it.page))
+        );
+        if (normalized.length) {
+          columnHighlightIndex[col] = normalized;
+        }
+      });
+      viewer.__columnHighlightIndex = columnHighlightIndex;
+
+      console.log("[HL] will fetch & inject for entry", id, "columns:", Object.keys(columnHighlightIndex));
+      await injectHighlightsIntoPdfViewer(viewer, columnHighlightIndex);
+
+      // After highlights are ready, sync QA buttons (if they are already rendered)
+      syncQaButtonsWithHighlights();
+
+
     } catch (err) {
       console.warn("[highlight] skip:", err);
     }
   })();
+  // === Kick off QA loading for the left pane ===
+  if (qaContainer) {
+    (async () => {
+      try {
+        if (!questionID || !id) {
+          // Missing identifiers – show a friendly message instead of failing silently
+          renderQa(qaContainer, {
+            ok: false,
+            error: "Missing review or entry id.",
+          });
+          return;
+        }
 
+        const payload = await fetchEntryQa(questionID, id);
+        renderQa(qaContainer, payload);
+      } catch (err) {
+        console.error("[QA] failed:", err);
+        renderQa(qaContainer, { ok: false, error: err.message || String(err) });
+      }
+    })();
+  }
 }
 
 function closePaperModal() {
@@ -748,84 +969,7 @@ function closePaperModal() {
   modal.style.display = "none";
 }
 
-function openNestedModal() {
-  document.getElementById("nested-edit-modal").style.display = "block";
-}
-
-function closeNestedModal() {
-  document.getElementById("nested-edit-modal").style.display = "none";
-}
-
-function addQuestionInput() {
-  const container = document.getElementById("questions-container");
-  const div = document.createElement("div");
-  div.innerHTML = `<input type="text" placeholder="Enter question" class="question-input">
-                   <button onclick="this.parentElement.remove()">Remove</button>`;
-  container.appendChild(div);
-}
-
-let qaRendered = false;
-
-function confirmQuestions() {
-  const inputs = document.querySelectorAll('.question-input');
-  const questions = Array.from(inputs).map(i => i.value.trim()).filter(Boolean);
-  const container = document.getElementById("questions-container");
-
-  if (questions.length === 0) {
-    container.innerHTML = `<p style="color: red;">Please add at least one question.</p>`;
-    return;
-  }
-
-  // Render inside modal
-  container.innerHTML = "";
-  const qaTable = document.createElement('div');
-  qaTable.style.border = '1px solid #ccc';
-  qaTable.style.borderRadius = '6px';
-  qaTable.style.padding = '10px';
-  qaTable.style.marginTop = '20px';
-
-  questions.forEach((q, idx) => {
-    const qaRow = document.createElement('div');
-    qaRow.style.marginBottom = '10px';
-    qaRow.innerHTML = `<strong>Q${idx + 1}:</strong> ${q}<br><strong>A:</strong> [Answer will go here]`;
-    qaTable.appendChild(qaRow);
-  });
-
-  container.appendChild(qaTable);
-
-  const qaList = document.getElementById("qa-list");
-if (qaList) {
-  qaList.innerHTML = "";
-
-  const table = document.createElement("table");
-  table.style.width = "100%";
-  table.style.borderCollapse = "collapse";
-  table.innerHTML = `
-    <thead>
-      <tr>
-        <th style="text-align: left; padding: 8px;">Question</th>
-        <th style="text-align: left; padding: 8px;">Answer</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${questions.map((q, idx) => `
-        <tr>
-          <td style="padding: 8px;">Q${idx + 1}: ${q}</td>
-          <td style="padding: 8px;">[Answer will go here]</td>
-        </tr>
-      `).join("")}
-    </tbody>
-  `;
-  qaList.appendChild(table);
-}
-}
-
-// Delegate click event for dynamically inserted #edit-btn
-document.addEventListener("click", function (e) {
-  if (e.target && e.target.id === "edit-btn") {
-    openNestedModal();
-  }
-});
+//let qaRendered = false;
 
 // Open/close the upload modal (if corresponding button exists on the page)
 function toggleUploadModal(show) {

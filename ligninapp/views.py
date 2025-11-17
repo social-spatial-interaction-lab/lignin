@@ -809,3 +809,87 @@ def get_entry_highlights(request, review_id, entry_id):
         "file_name": file_name,
         "by_column": by_column,
     })
+
+@require_GET
+def entry_qa_view(request, review_id, entry_id):
+    """Return QA data (Column + Value) for a specific entry under the given review.
+
+    Response example:
+    {
+      "ok": true,
+      "review_id": 1,
+      "entry_id": 42,
+      "data": [
+        {
+          "column_id": 10,
+          "name": "Q1: Method?",
+          "description": "Please summarize the methods used in this paper.",
+          "value": "Randomized controlled trial..."
+        },
+        ...
+      ]
+    }
+    """
+    # Basic object lookups
+    review = get_object_or_404(Review, pk=review_id)
+    entry = get_object_or_404(Entry, pk=entry_id)
+
+    # Confirm that the entry belongs to the given review
+    if not review.entries.filter(pk=entry.pk).exists():
+        return JsonResponse({"ok": False, "error": "Entry not in this review"}, status=400)
+
+    # Optional: permission check, consistent with index() which uses has_perm
+    if not has_perm("ligninapp.view_review", request.user, review):
+        return JsonResponse({"ok": False, "error": "Permission denied"}, status=403)
+
+    # Retrieve all Columns of this review (including those without a Value yet)
+    columns_qs = review.columns.all().only("id", "name", "description")
+    columns = list(columns_qs)
+
+    # If the review has no columns yet, just return an empty list
+    if not columns:
+        return JsonResponse(
+            {
+                "ok": True,
+                "review_id": review.id,
+                "entry_id": entry.id,
+                "data": [],
+            }
+        )
+
+    col_ids = [c.id for c in columns]
+
+    # Retrieve all Value objects for this entry under the review's columns
+    values_qs = Value.objects.filter(entry=entry, column_id__in=col_ids).only("column_id", "value")
+
+    # Build a mapping: column_id -> value string (last one wins if duplicates exist)
+    value_by_col_id = {}
+    for v in values_qs:
+        value_by_col_id[v.column_id] = v.value
+
+    # Some internal/reserved columns should not be shown in the QA panel
+    reserved_names = {"file_name", "File name", "Entry ID"}
+
+    data = []
+    for col in columns:
+        if col.name in reserved_names:
+            # Skip internal columns that are not real QA questions
+            continue
+
+        data.append(
+            {
+                "column_id": col.id,
+                "name": col.name,
+                "description": col.description or "",
+                "value": value_by_col_id.get(col.id, ""),
+            }
+        )
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "review_id": review.id,
+            "entry_id": entry.id,
+            "data": data,
+        }
+    )
