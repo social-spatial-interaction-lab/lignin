@@ -89,6 +89,8 @@ local_settings.py
 
 lignin/.env
 db.sqlite3
+db.sqlite3.bkp*
+
 
 # pycharm
 /.idea/
