@@ -156,7 +156,7 @@ function reloadPapers() {
       const field   = colDef.field;
       const rowData = cell.getRow().getData();
       const entryId = rowData.entry_id;
-      console.debug("11");
+      //console.debug("11");
       if (!entryId || !field || field === "file_name") return;
       const el = cell.getElement();
       // If not locked, remove any existing badge
@@ -178,7 +178,6 @@ function reloadPapers() {
         badge = document.createElement("span");
         badge.className = "cell-edited-badge";
         badge.textContent = "Edited";
-        console.debug("badge created");
         // Simple inline styles (can be moved to CSS)
         Object.assign(badge.style, {
           position: "absolute",
@@ -458,11 +457,11 @@ function reloadPapers() {
     
           if (window.DEBUG_EDITED) {
             const entryId = cell.getRow().getData().entry_id;
-            console.debug("[EditedDebug] rowFormatter for cell", {
-              field,
-              entryId,
-              isEditedFlag: isEdited(entryId, field),
-            });
+            //console.debug("[EditedDebug] rowFormatter for cell", {
+            //  field,
+            //  entryId,
+            //  isEditedFlag: isEdited(entryId, field),
+            //});
           }
     
           // This will check isEdited(...) internally and add/remove the badge

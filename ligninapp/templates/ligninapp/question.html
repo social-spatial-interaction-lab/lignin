@@ -188,6 +188,7 @@
     border-color: #ddd;
   }
 
+
   </style>
 
   <script>
@@ -328,6 +329,7 @@
     }
 
     // Executed after clicking “Generate Answers”
+    // process rows one by one, only sending unedited columns for each row
     async function generateAnswers() {
       const table = getPaperTable();
       if (!table) {
@@ -335,83 +337,175 @@
         return;
       }
 
-      // 1) Column names (table header titles)
-      const columnTitles = table.getColumns()
-        .map(col => {
-          const def = col.getDefinition ? col.getDefinition() : {};
-          return (def.title ?? "").toString().trim();
-        })
-        .filter(t => t.length > 0);
+      // Get all row data from Tabulator
+      const rows = table.getData() || [];
+      const total = rows.length;
 
-      const columnsObj = { columns: columnTitles };
-
-      // 2) File URL of each row (constructed from file_name)
-      const urls = table.getData()
-        .map(row => row && row.file_name
-          ? `/media/uploaded_papers/${encodeURIComponent(row.file_name)}`
-          : ""
-        )
-        .filter(u => u.length > 0);
-
-      const urlsObj = { urls };
-
-      // Debug output
-      console.log("columnsObj:", columnsObj);
-      console.log("urlsObj:", urlsObj);
-
-      // 3) Send to backend
-      const endpoint = `/question/${encodeURIComponent(questionID)}/generate-request-accept/`;
-
-      const btn = document.getElementById("btn-generate");
-
-  try {
-    //Block UI
-    if (btn) btn.disabled = true;              // disable trigger
-    showBusy("Generating answers… Please wait."); // show modal overlay
-
-    //Send request
-    const res = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-CSRFToken": (window.Cookies && Cookies.get("csrftoken")) || "",
-      },
-      body: JSON.stringify({ columns: columnsObj, urls: urlsObj }),
-    });
-
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`HTTP ${res.status}: ${text}`);
-    }
-
-    const data = await res.json();
-    console.log("server response:", data);
-
-    if (data.ok) {
-      console.log("[LLM text]:", data.llm_text);
-      const tableInst = getPaperTable();
-      if (window.applyLlmTextToTabulator && tableInst) {
-        window.applyLlmTextToTabulator(
-          data.llm_text,
-          tableInst,
-          (window.isEdited || (() => false))
-        );
-      } else {
-        console.warn("applyLlmTextToTabulator or table instance not ready");
+      if (total === 0) {
+        alert("No rows to process.");
+        return;
       }
-    } else {
-      console.error("Server error:", data.error);
-      alert("Server error: " + (data.error || "unknown"));
-  }
-  } catch (err) {
-    console.error("generateAnswers request failed:", err);
-    alert("Request failed: " + err.message);
-  } finally {
-    //Always unblock UI
-    hideBusy();
-    if (btn) btn.disabled = false;
+
+      // Helper to resolve if a cell is edited by entry id + field name.
+      // Prefer the exported window.isEdited from main.js if available.
+      function isCellEdited(entryId, field) {
+        if (!entryId || !field) return false;
+        if (typeof window.isEdited === "function") {
+          return !!window.isEdited(entryId, field);
+        }
+        // Fallback: treat as not edited if helper is not available.
+        return false;
+      }
+
+      // We will reuse the Tabulator column definitions for each row
+      const allColumns = table.getColumns() || [];
+
+      // Endpoint for backend
+      const endpoint = `/question/${encodeURIComponent(window.questionID)}/generate-request-accept/`;
+
+      // Progress and UI blocking
+      const btn = document.getElementById("btn-generate");
+      let done = 0;  // number of rows already processed (including skipped rows)
+
+      try {
+        // Block UI while processing all rows
+        if (btn) btn.disabled = true;
+        if (typeof showBusy === "function") {
+          showBusy(`0 / ${total} completed`);
+        }
+
+        // Process each row sequentially
+        for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+          const row = rows[rowIndex] || {};
+          const entryId = row.entry_id;
+
+          // Build URL for this row (same rule as before)
+          const fileName = row.file_name;
+          const urlForRow = fileName
+            ? `/media/uploaded_papers/${encodeURIComponent(fileName)}`
+            : "";
+
+          // If we cannot build a valid URL or entry id, treat as skipped row
+          if (!entryId || !urlForRow) {
+            done += 1;
+            if (typeof showBusy === "function") {
+              showBusy(`${done} / ${total} completed`);
+            }
+            continue;
+          }
+
+          // Collect UNEDITED column titles for this row
+          const uneditedColumnTitles = [];
+
+          for (const col of allColumns) {
+            if (!col || typeof col.getDefinition !== "function") {
+              continue;
+            }
+            const def = col.getDefinition() || {};
+            const field = def.field;
+            const title = (def.title ?? "").toString().trim();
+
+            // Skip columns without a usable field or title
+            if (!field || !title) {
+              continue;
+            }
+
+            // Skip internal / non-answer columns if needed
+            if (field === "entry_id") {
+              continue;
+            }
+
+            // Check if this cell is marked as edited (has an edited badge / locked)
+            if (isCellEdited(entryId, field)) {
+              // Edited cells must be skipped from the request payload
+              continue;
+            }
+
+            // This column is not edited for the current row, include it
+            uneditedColumnTitles.push(title);
+          }
+
+          // If all columns for this row are edited, skip sending a request
+          if (uneditedColumnTitles.length <= 1) {
+            done += 1;  // still count as completed
+            if (typeof showBusy === "function") {
+              showBusy(`${done} / ${total} completed`);
+            }
+            continue;
+          }
+
+          // Build request payload for this single row
+          const columnsObj = { columns: uneditedColumnTitles };
+          const urlsObj = { urls: [urlForRow] };
+
+          try {
+            // Send request for this row
+            const res = await fetch(endpoint, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-CSRFToken": (window.Cookies && Cookies.get("csrftoken")) || "",
+              },
+              body: JSON.stringify({
+                columns: columnsObj,
+                urls: urlsObj,
+              }),
+            });
+
+            if (!res.ok) {
+              const text = await res.text();
+              throw new Error(`HTTP ${res.status}: ${text}`);
+            }
+
+            const data = await res.json();
+            //console.log("server response for row", rowIndex, ":", data);
+
+            if (data.ok) {uneditedColumnTitles.length
+              console.log("[LLM text for row]", data.llm_text);
+
+              // Apply LLM results back to the table for this row
+              const tableInst = getPaperTable();
+              if (window.applyLlmTextToTabulator && tableInst) {
+                window.applyLlmTextToTabulator(
+                  data.llm_text,
+                  tableInst,
+                  (window.isEdited || (() => false))
+                );
+              } else {
+                console.warn("applyLlmTextToTabulator or table instance not ready");
+              }
+            } else {
+              console.error("Server error for row", rowIndex, ":", data.error);
+              alert("Server error: " + (data.error || "unknown"));
+              // Depending on UX, we can choose to break or continue.
+              // For now we stop the whole process on the first server-side error.
+              break;
+            }
+          } catch (rowErr) {
+            console.error("generateAnswers request failed for row", rowIndex, ":", rowErr);
+            alert("Request failed for one of the rows: " + rowErr.message);
+            // Stop the loop on network/fetch error
+            break;
+          } finally {
+            // Mark this row as completed (even if failed), update progress
+            done += 1;
+            if (typeof showBusy === "function") {
+              showBusy(`${done} / ${total} completed`);
+            }
+          }
+        }
+      } catch (err) {
+        console.error("generateAnswers failed:", err);
+        alert("Request failed: " + err.message);
+      } finally {
+        // Always unblock UI when the whole process has finished or aborted
+        if (typeof hideBusy === "function") {
+          hideBusy();
+        }
+        if (btn) btn.disabled = false;
+      }
     }
-  }
+
 
     function toggleUploadModal(show) {
       const modal = document.getElementById("uploadModal");
