@@ -28,11 +28,86 @@ from django.views.decorators.csrf import csrf_exempt
 
 from .LLM_response import LLM_entrance
 
+from django.conf import settings  # log
+from datetime import datetime     # log
+
 import environ
 env = environ.Env()
 environ.Env.read_env()
 
 logger = logging.getLogger(__name__)
+
+LOG_INITIALIZED = False  # reset to False on each server start
+LOG_FILE_PATH = None
+
+def _init_log_if_needed():
+    """
+    Initialize the log directory and log file once per server start.
+    This function is only called from get_papers() on its first execution.
+    It will:
+      - create log/ directory under project root (where manage.py lives),
+      - create a file named LogYYYYMMDD_HHMMSS.log,
+      - write the first line: [New_Experiment] Null
+      - set LOG_INITIALIZED = True
+    """
+    global LOG_INITIALIZED, LOG_FILE_PATH
+    if LOG_INITIALIZED:
+        return
+
+    # Try to use settings.BASE_DIR as the project root (the directory that contains manage.py).
+    base_dir = getattr(settings, "BASE_DIR", None)
+    if base_dir is None:
+        # Fallback: go up a few levels from this file, if BASE_DIR is not configured as expected.
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    log_dir = os.path.join(base_dir, "log")
+    os.makedirs(log_dir, exist_ok=True)
+
+    now = datetime.now()
+    filename = f"Log{now.strftime('%Y%m%d_%H%M%S')}.log"
+    LOG_FILE_PATH = os.path.join(log_dir, filename)
+
+    # First line: New_Review Null
+    line = f"{now.strftime('%Y-%m-%d %H:%M:%S')} [New_Experiment] Null\n"
+    try:
+        with open(LOG_FILE_PATH, "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception:
+        # Do not break the request flow if logging fails
+        LOG_FILE_PATH = None
+
+    LOG_INITIALIZED = LOG_FILE_PATH is not None
+
+
+def _append_log(operation: str, content):
+    """
+    Append a single log line in the format:
+        <timestamp> [<Operation>] <Content>
+
+    If content is None or empty, write 'Null'.
+    If the log system has not been initialized yet (LOG_INITIALIZED is False),
+    this function will silently do nothing.
+    """
+    global LOG_INITIALIZED, LOG_FILE_PATH
+
+    if not LOG_INITIALIZED or not LOG_FILE_PATH:
+        # Requirement: log file is created only by get_papers() on first call.
+        # If get_papers() has not yet run, we skip logging.
+        return
+
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    if content is None or str(content).strip() == "":
+        content_str = "Null"
+    else:
+        content_str = str(content)
+
+    line = f"{ts} [{operation}] {content_str}\n"
+    try:
+        with open(LOG_FILE_PATH, "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception:
+        # Avoid raising errors from logging
+        pass
 
 def index(request):
     pks = [i.pk for i in Review.objects.all() if has_perm('ligninapp.view_review', request.user, i)]
@@ -113,6 +188,10 @@ def create_column(request):
             if review:
                 review.columns.add(column)
 
+            # log: log column creation (New_Question)
+            desc = column.description if column.description else "Null"
+            _append_log("New_Question", f"{column.name} | {desc}")
+
             # Redirect back to the review page (keeps old behavior).
             return HttpResponseRedirect(review.get_absolute_url())
     else:
@@ -166,6 +245,10 @@ def add_paper(request, question_id, paper_id):
     return HttpResponse(status=201)
 
 def get_papers(request, question_id):
+
+    # log: initialize log system on first call
+    _init_log_if_needed()
+
     review = get_object_or_404(Review, id=question_id)
 
     columns_qs = review.columns.all().only("id", "name")
@@ -179,7 +262,7 @@ def get_papers(request, question_id):
         .prefetch_related(
             Prefetch(
                 "value_set",
-                # NEW: Prefetch the 'edited' field as well to avoid N+1 queries later
+                # Prefetch the 'edited' field as well to avoid N+1 queries later
                 queryset=Value.objects.filter(column_id__in=col_ids).only("column_id", "value", "edited"),
             )
         )
@@ -259,6 +342,21 @@ def edit_annotation(request, entry_id, column_pk):
     logger.info(f"[edit_annotation] entry={entry_id} col={column_pk} lock_after_save={lock_after_save} -> edited will be {True if lock_after_save else val.edited}")
     val.save(update_fields=["value", "notes", "edited"] if new_notes is not None else ["value", "edited"])
 
+    # log: log edit operation (Edit_Answer)
+    # Get file name from the 'file_name' column of this entry
+    file_name = (
+        Value.objects
+        .filter(entry_id=entry.id, column__name="file_name")
+        .values_list("value", flat=True)
+        .first()
+    )
+    if not file_name:
+        file_name = "Null"
+    col_name = column.name if column and column.name else "Null"
+    _append_log("Edit_Answer", f"{file_name} | {col_name}")
+
+
+
     return JsonResponse({
         "ok": True,
         "entry_id": entry.id,
@@ -287,12 +385,24 @@ def set_value_edited(request, entry_id, column_pk):
     entry, column, val = _get_value_by_ids(entry_id, column_pk, create_if_missing=True)
 
     
-    logger.info(f"[set_value_edited] entry={entry_id} col={column_pk} payload={payload}")
+    #logger.info(f"[set_value_edited] entry={entry_id} col={column_pk} payload={payload}")
     prev = val.edited
     val.edited = payload["edited"]
     val.save(update_fields=["edited"])
-    logger.info(f"[set_value_edited] entry={entry_id} col={column_pk} edited {prev} -> {val.edited}")
+    #logger.info(f"[set_value_edited] entry={entry_id} col={column_pk} edited {prev} -> {val.edited}")
 
+    # log: log when the edited flag is removed (Remove_Badge)
+    if prev and not val.edited:
+        file_name = (
+            Value.objects
+            .filter(entry_id=entry.id, column__name="file_name")
+            .values_list("value", flat=True)
+            .first()
+        )
+        if not file_name:
+            file_name = "Null"
+        col_name = column.name if column and column.name else "Null"
+        _append_log("Remove_Badge", f"{file_name} | {col_name}")
 
     return JsonResponse({
         "ok": True,
@@ -422,6 +532,9 @@ def upload_paper(request, question_id):
     Value.objects.create(entry=entry, column=file_name_col, value=os.path.basename(paper.file.name))
 
     messages.success(request, f"Uploaded: {os.path.basename(paper.file.name)}")
+
+    # log: log paper upload (New_Paper)
+    _append_log("New_Paper", os.path.basename(paper.file.name))
     return redirect("question", question_id)
 
 @require_http_methods(["DELETE"])
@@ -444,6 +557,10 @@ def remove_column_from_review(request, review_id, column_id):
     if not review.columns.filter(pk=column.pk).exists():
         return JsonResponse({"ok": False, "error": "Column not in this review"}, status=400)
 
+    # log: prepare log content before modifying the DB
+    col_name = column.name if column.name else "Null"
+    col_desc = column.description if column.description else "Null"
+
     # 1) Delete all Values in this column under the current review’s entries
     entry_ids = list(review.entries.values_list("id", flat=True))
     Value.objects.filter(column=column, entry_id__in=entry_ids).delete()
@@ -454,6 +571,9 @@ def remove_column_from_review(request, review_id, column_id):
     # 3) Optional cleanup: if this column is no longer used by any review and has no remaining Value, physically delete it
     if not column.review_set.exists() and not Value.objects.filter(column=column).exists():
         column.delete()
+
+    # log: log column deletion (Delete_Question)
+    _append_log("Delete_Question", f"{col_name} | {col_desc}")
 
     return JsonResponse({"ok": True})
 
@@ -468,6 +588,16 @@ def remove_entry_from_review(request, review_id, entry_id):
     if not review.entries.filter(pk=entry.pk).exists():
         return JsonResponse({"ok": False, "error": "This entry does not belong to this review."}, status=400)
 
+    # log: get file name for logging before removing
+    file_name = (
+        Value.objects
+        .filter(entry=entry, column__name="file_name")
+        .values_list("value", flat=True)
+        .first()
+    )
+    if not file_name:
+        file_name = "Null"
+
     # 1. Unlink it from the current review
     review.entries.remove(entry)
 
@@ -475,6 +605,9 @@ def remove_entry_from_review(request, review_id, entry_id):
     if not entry.review_set.exists():
         Value.objects.filter(entry=entry).delete()
         entry.delete()
+
+    # log: log deletion (Delete_Paper)
+    _append_log("Delete_Paper", file_name)
 
     return JsonResponse({"ok": True})
 
@@ -521,6 +654,8 @@ def register(request):
 @require_http_methods(["POST"])
 def generate_request_accept_view(request, question_id):
     try:
+        # log: log when LLM answer generation starts
+        _append_log("Generate_Answer", None)
         payload = json.loads(request.body.decode("utf-8"))
         columns_obj = payload.get("columns", {}) or {}
         urls_obj    = payload.get("urls", {})    or {}
@@ -750,7 +885,8 @@ def generate_request_accept_view(request, question_id):
                     )
 
         persist_answers()
-
+        # log: log when LLM answers have been successfully persisted
+        _append_log("Answer_Obtained", None)
         # 4) Normal return (compatible with old frontend + new structure)
         return JsonResponse({
             "ok": True,
