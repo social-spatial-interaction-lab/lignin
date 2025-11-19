@@ -73,15 +73,19 @@ def LLM_entrance(
     # 2) Main loop
     for idx, url in enumerate(url_list, start=1):
         # 2.a Extract text from the PDF file
+        print("Extracting text...")
         pdf_text = extract_text_from_pdf(url)
 
+        print("Sending to LLM...")
         # 2.b Build the prompt and send it to LLM
         prompt = build_llm_prompt(pdf_text, filtered_cols)
         llm_raw = send_llm_request(prompt)
 
+        print("Handling output...")
         # 2.c Handle the reply of LLM
         answers_by_q, evidence_by_q = parse_llm_output_sections(llm_raw)
 
+        print("Building QA payload...")
         # 2.d Build QA payload
         qa_payload = {
             "url": url,
@@ -89,6 +93,7 @@ def LLM_entrance(
             "evidence_by_question": evidence_by_q,
         }
 
+        print("Working on highlights...")
         # 2.e [Optional] Build the highlight-location payload (decoupled from QA; failure does not affect QA).
         highlights_payload = None
         if include_highlights:
@@ -390,6 +395,7 @@ def send_llm_request(
         # JSON strictness: DeepInfra's support for response_format may vary by model, use with caution
         # "response_format": {"type": "json_object"},
     }
+    print("Composed data, sending request...")
 
     try:
         resp = requests.post(url, headers=headers, json=data, timeout=timeout)
@@ -398,7 +404,7 @@ def send_llm_request(
         # Include the first few hundred characters of the server response for debugging
         body_preview = getattr(e.response, "text", "")[:600] if hasattr(e, "response") and e.response is not None else ""
         raise RuntimeError(f"LLM API request failed: {e}\n{body_preview}") from e
-
+    print("Received requirest, handling structure")
     payload = resp.json()
     # Handle empty/abnormal structures
     choices = payload.get("choices") or []
@@ -410,6 +416,7 @@ def send_llm_request(
         raise RuntimeError("Empty content from LLM.")
 
     # Return only the text, parsing/cleaning is handled later by parse_llm_output_sections
+    print("Returning content")
     return content
 
 
@@ -556,7 +563,7 @@ def fuzzy_match_evidence(evidence: str, full_text: str,
     - Step up tolerance: 0 -> 7 -> 50 (configurable).
     - If fuzzysearch is unavailable, fall back to exact substring search.
     """
-    if not evidence or not full_text:
+    if not evidence or not full_text or evidence == "NOTFOUND":
         return None
 
     # Exact match first (fast path)
@@ -566,6 +573,7 @@ def fuzzy_match_evidence(evidence: str, full_text: str,
     # Fuzzy match if library is available
     if find_near_matches is not None:
         for d in max_edit_distances:
+            print(f"Trying find_near_matches for evidence={evidence[:30]}, d={d}, full_text={full_text[:30]}")
             try:
                 matches = find_near_matches(evidence, full_text, max_l_dist=d, max_deletions=d,
                                             max_insertions=d, max_substitutions=d)
