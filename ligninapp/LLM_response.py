@@ -573,15 +573,19 @@ def fuzzy_match_evidence(evidence: str, full_text: str,
     # Fuzzy match if library is available
     if find_near_matches is not None:
         for d in max_edit_distances:
-            print(f"Trying find_near_matches for evidence={evidence[:30]}, d={d}, full_text={full_text[:30]}")
-            try:
-                matches = find_near_matches(evidence, full_text, max_l_dist=d, max_deletions=d,
-                                            max_insertions=d, max_substitutions=d)
-            except Exception:
-                matches = []
-            if matches:
-                # take the first match (keep behavior deterministic)
-                return matches[0].matched
+            # If the evidence is too short relative to the error acceptance,
+            # then things like the empty string can match (which leads to a lot of results)
+            # Hence d is compared to evidence
+            if d * 4 < len(evidence):
+                print(f"Trying find_near_matches for evidence={evidence[:60]}, d={d}, full_text={full_text[:60]}")
+                try:
+                    matches = find_near_matches(evidence, full_text, max_l_dist=d, max_deletions=d,
+                                                max_insertions=d, max_substitutions=d)
+                except Exception:
+                    matches = []
+                if matches:
+                    # take the first match (keep behavior deterministic)
+                    return matches[0].matched
 
     # Last resort: None (no match)
     return None
