@@ -14,12 +14,15 @@ from pathlib import Path
 
 import environ
 import os
-# Initialise environment variables
-env = environ.Env()
-environ.Env.read_env()
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+# Initialise environment variables
+env = environ.Env()
+environ.Env.read_env(os.path.join(BASE_DIR, '.env'))
+
 
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
@@ -33,7 +36,7 @@ SECRET_KEY = env('SECRET_KEY')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = [".herokuapp.com", "127.0.0.1"]
+ALLOWED_HOSTS = ["localhost", ".herokuapp.com", "127.0.0.1"]
 
 
 # Application definition
@@ -147,3 +150,30 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/4.1/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+
+MEDIA_URL = '/media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,  # Keep Django’s own logging
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+        },
+    },
+    "loggers": {
+        # Your app's logger
+        "ligninapp": {
+            "handlers": ["console"],
+            "level": "INFO",      # You can also set to DEBUG for more detail
+            "propagate": False,
+        },
+        # Root logger (optional, ensures any logger prints)
+        "": {
+            "handlers": ["console"],
+            "level": "INFO",
+        },
+    },
+}

@@ -2,15 +2,25 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Title</title>
+    <title>Create New Review + Upload Paper</title>
 </head>
 <body>
-<form action="" method="post">
-  {% csrf_token %}
-  <table>
-    {{ form.as_table }}
-  </table>
-  <input type="submit" value="Submit" />
+<h1>Create a New Review and Upload a Paper</h1>
+
+<form method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+    
+    <fieldset>
+        <legend>Review Details</legend>
+        {{ review_form.as_p }}
+    </fieldset>
+
+    <fieldset>
+        <legend>Upload Initial Paper</legend>
+        {{ paper_form.as_p }}
+    </fieldset>
+
+    <button type="submit">Submit</button>
 </form>
 </body>
 </html>

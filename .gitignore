@@ -1,5 +1,7 @@
 # Created by https://www.gitignore.io
 
+.env
+
 ### OSX ###
 .DS_Store
 .AppleDouble
@@ -93,3 +95,10 @@ db.sqlite3
 
 # venv
 /venv/
+.venv/
+
+.env
+
+# Allow pdfjs build folder
+!ligninapp/static/ligninapp/pdfjs/build/
+!ligninapp/static/ligninapp/pdfjs/build/**
