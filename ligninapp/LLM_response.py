@@ -556,7 +556,7 @@ def _safe_rect_to_list(rect: "fitz.Rect") -> List[float]:
     return [float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)]
 
 def fuzzy_match_evidence(evidence: str, full_text: str,
-                         max_edit_distances: Tuple[int, ...] = (0, 7, 50)) -> Optional[str]:
+                         max_edit_distances: Tuple[int, ...] = (0, 7)) -> Optional[str]:
     """
     Try to find a near-exact substring of `evidence` inside `full_text`.
     Returns the *matched substring* (best-effort) or None.
@@ -564,26 +564,33 @@ def fuzzy_match_evidence(evidence: str, full_text: str,
     - If fuzzysearch is unavailable, fall back to exact substring search.
     """
     if not evidence or not full_text or evidence == "NOTFOUND":
+        print(f"[fuzzy_match_evidence] skip: invalid input, evidence={repr(evidence)[:60]}, full_text_len={len(full_text)}")
         return None
 
     # Exact match first (fast path)
     if evidence in full_text:
+        print(f"[fuzzy_match_evidence] exact match success for evidence={repr(evidence[:60])}, full_text_len={len(full_text)}")
         return evidence
 
     # Fuzzy match if library is available
     if find_near_matches is not None:
         for d in max_edit_distances:
-            print(f"Trying find_near_matches for evidence={evidence[:30]}, d={d}, full_text={full_text[:30]}")
+            print(f"[fuzzy_match_evidence] Trying find_near_matches for evidence={evidence[:30]!r}, d={d}, full_text={full_text[:30]!r}")
             try:
                 matches = find_near_matches(evidence, full_text, max_l_dist=d, max_deletions=d,
                                             max_insertions=d, max_substitutions=d)
             except Exception:
+                print(f"[fuzzy_match_evidence] Exception during fuzzysearch at d={d}: {exc!r}")  # ★★★ NEW
                 matches = []
             if matches:
                 # take the first match (keep behavior deterministic)
-                return matches[0].matched
+                matched = matches[0].matched
+                print(f"[fuzzy_match_evidence] fuzzy match success at d={d}, matched={matched[:60]!r}")
+                return matched
+
 
     # Last resort: None (no match)
+    print(f"[fuzzy_match_evidence] no match found for evidence={repr(evidence[:60])}, returning None")
     return None
 
 
@@ -680,6 +687,7 @@ def build_highlights_payload(url: str,
       }
     }
     """
+    print(f"[build_highlights_payload] start for url={url!r}, questions={len(evidence_by_question or {})}")
     highlights = {
         "doc": {
             "url": url,
