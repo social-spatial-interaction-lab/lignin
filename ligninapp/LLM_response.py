@@ -564,10 +564,12 @@ def fuzzy_match_evidence(evidence: str, full_text: str,
     - If fuzzysearch is unavailable, fall back to exact substring search.
     """
     if not evidence or not full_text or evidence == "NOTFOUND":
+        print(f"[fuzzy_match_evidence] skip: invalid input, evidence={repr(evidence)[:60]}, full_text_len={len(full_text)}")
         return None
 
     # Exact match first (fast path)
     if evidence in full_text:
+        print(f"[fuzzy_match_evidence] exact match success for evidence={repr(evidence[:60])}, full_text_len={len(full_text)}")
         return evidence
 
     # Fuzzy match if library is available
@@ -588,6 +590,7 @@ def fuzzy_match_evidence(evidence: str, full_text: str,
                     return matches[0].matched
 
     # Last resort: None (no match)
+    print(f"[fuzzy_match_evidence] no match found for evidence={repr(evidence[:60])}, returning None")
     return None
 
 
@@ -684,6 +687,7 @@ def build_highlights_payload(url: str,
       }
     }
     """
+    print(f"[build_highlights_payload] start for url={url!r}, questions={len(evidence_by_question or {})}")
     highlights = {
         "doc": {
             "url": url,

@@ -152,11 +152,12 @@ function reloadPapers() {
 
     // NEW: Utility – render an “Edited” badge at the bottom-left of a cell (hover → ✕, click → unlock)
     function renderEditedBadge(cell) {
+      //console.debug("render entered")
       const colDef  = cell.getColumn().getDefinition();
       const field   = colDef.field;
       const rowData = cell.getRow().getData();
       const entryId = rowData.entry_id;
-      console.debug("11");
+      //console.debug("11");
       if (!entryId || !field || field === "file_name") return;
       const el = cell.getElement();
       // If not locked, remove any existing badge
@@ -178,7 +179,6 @@ function reloadPapers() {
         badge = document.createElement("span");
         badge.className = "cell-edited-badge";
         badge.textContent = "Edited";
-        console.debug("badge created");
         // Simple inline styles (can be moved to CSS)
         Object.assign(badge.style, {
           position: "absolute",
@@ -313,65 +313,101 @@ function reloadPapers() {
             editor: "input",
 
             // Render a title and a small button in the column header
-            titleFormatter: function(cell, formatterParams, onRendered) {
+            titleFormatter: function (column, formatterParams, onRendered) {
               // Determine whether the column is protected
               if (name === "file_name" || titleText === "File name") {
-                // Return only the title text, do not render the button
-                const span = document.createElement('span');
+                const span = document.createElement("span");
                 span.textContent = titleText;
-                span.style.fontWeight = 'bold';
+                span.style.fontWeight = "bold";
                 return span;
               }
-              const wrap = document.createElement('div');
-              wrap.style.display = 'flex';
-              wrap.style.alignItems = 'center';
-              wrap.style.gap = '6px';
 
-              const span = document.createElement('span');
+              // Get the header cell element of this column
+              // and ensure it can host absolutely-positioned children.
+              const headerEl = column && typeof column.getElement === "function"
+                ? column.getElement()
+                : null;
+              if (headerEl && getComputedStyle(headerEl).position === "static") {
+                headerEl.style.position = "relative";
+              }
+
+              // Text container: takes full width of header,
+              // leaves some right padding so the button will not overlap text.
+              const container = document.createElement("div");
+              container.style.width = "100%";
+              container.style.overflow = "hidden";
+              container.style.textOverflow = "ellipsis";
+              container.style.whiteSpace = "nowrap";
+              container.style.paddingRight = "28px"; // reserve space for the × button
+
+              const span = document.createElement("span");
               span.textContent = titleText;
+              span.style.fontWeight = "bold";
+              container.appendChild(span);
 
-              const btn = document.createElement('button');
-              btn.textContent = '✕';
-              btn.title = 'Remove this column from this review';
-              btn.style.padding = '0 6px';
-              btn.style.lineHeight = '18px';
-              btn.style.color = '#b00';
-              btn.style.background = '#f7f7f7'
-              btn.style.border = '1px solid #ccc';
-              btn.style.borderRadius = '4px';
-              btn.style.background = '#f7f7f7';
-              btn.style.cursor = 'pointer';
+              const btn = document.createElement("button");
+              btn.textContent = "✕";
+              btn.title = "Remove this column from this review";
+              btn.className = "column-remove-button";  // optional: for custom CSS
 
-              btn.addEventListener('click', async (ev) => {
-                ev.preventDefault();
-                ev.stopPropagation();
-                if (!confirm(`Remove column "${name}" from this review? This will delete its cells in this review.`)) return;
-                try {
-                  const res = await fetch(`/review/${encodeURIComponent(questionID)}/columns/${encodeURIComponent(id)}/remove/`, {
-                    method: "POST",
-                    headers: { "X-CSRFToken": csrftoken },
-                  });
-                  if (!res.ok) {
-                    const txt = await res.text();
-                    throw new Error(`HTTP ${res.status}: ${txt}`);
-                  }
-                  const out = await res.json();
-                  if (out.ok) {
-                    reloadPapers();
-                  } else {
-                    alert(out.error || "Failed to remove column.");
-                  }
-                } catch (err) {
-                  console.error(err);
-                  alert("Remove failed: " + err.message);
-                }
+              // Style: float above text, pinned to right side of header cell
+              Object.assign(btn.style, {
+                position: "absolute",
+                top: "50%",
+                right: "4px",
+                transform: "translateY(-50%)",
+                padding: "0 6px",
+                lineHeight: "16px",
+                color: "#b00",
+                background: "#f7f7f7",
+                border: "1px solid #ccc",
+                borderRadius: "4px",
+                cursor: "pointer",
+                zIndex: "2",          // make sure it stays above text
               });
 
-              wrap.appendChild(span);
-              wrap.appendChild(btn);
-              return wrap;
-            }
-          };
+    btn.addEventListener("click", async (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (!confirm(`Remove column "${name}" from this review? This will delete its cells in this review.`)) return;
+      try {
+        const res = await fetch(
+          `/review/${encodeURIComponent(questionID)}/columns/${encodeURIComponent(id)}/remove/`,
+          {
+            method: "POST",
+            headers: { "X-CSRFToken": csrftoken },
+          }
+        );
+        if (!res.ok) {
+          const txt = await res.text();
+          throw new Error(`HTTP ${res.status}: ${txt}`);
+        }
+        const out = await res.json();
+        if (out.ok) {
+          reloadPapers();
+        } else {
+          alert(out.error || "Failed to remove column.");
+        }
+      } catch (err) {
+        console.error(err);
+        alert("Remove failed: " + err.message);
+      }
+    });
+
+    // Attach the button to the header cell if we have it;
+    // otherwise, fall back to putting it in the container.
+    if (headerEl) {
+      // Remove any previous button to avoid duplicates after re-render
+      const existing = headerEl.querySelector(".column-remove-button");
+      if (existing) existing.remove();
+      headerEl.appendChild(btn);
+    } else {
+      container.appendChild(btn);
+    }
+
+    return container;
+  },
+};
         })
       : (Array.isArray(payload.columns) ? payload.columns.map((name) => ({
           title: (name === "file_name") ? "File name" : name,
@@ -458,11 +494,6 @@ function reloadPapers() {
     
           if (window.DEBUG_EDITED) {
             const entryId = cell.getRow().getData().entry_id;
-            console.debug("[EditedDebug] rowFormatter for cell", {
-              field,
-              entryId,
-              isEditedFlag: isEdited(entryId, field),
-            });
           }
     
           // This will check isEdited(...) internally and add/remove the badge
@@ -519,6 +550,19 @@ function reloadPapers() {
         console.error("[save cell] failed:", err);
         alert("save failed" + err.message);
       }
+    });
+    // NEW: whenever a cell edit is cancelled / closed without change,
+    // re-evaluate the Edited badge based on the current frontend editedMap.
+    table.on("cellEditCancelled", function (cell) {
+      const colDef = cell.getColumn().getDefinition();
+      const field  = colDef && colDef.field;
+
+      // Skip non-data / special columns, and non-editable ones
+      if (!field || field === "file_name") return;
+      if (!colDef.editor) return;
+
+      // This will read isEdited(entryId, field) and add/remove the badge
+      renderEditedBadge(cell);
     });
     
   }, 'json');
