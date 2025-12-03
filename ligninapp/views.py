@@ -467,17 +467,6 @@ def get_snowball(request, question_id):
 
     return JsonResponse({"data": sorted([i for i in response if i], key=lambda x: x["occurrence_number"], reverse=True)})
 
-def upload_paper(request):
-    if request.method == 'POST':
-        form = UploadedPaperForm(request.POST, request.FILES)
-        if form.is_valid():
-            form.save()
-            return HttpResponseRedirect('/')  # adjust redirect as needed
-    else:
-        form = UploadedPaperForm()
-    return render(request, 'ligninapp/upload_paper.html', {'form': form})
-
-
 def create_review(request):
     title = request.GET.get("title", "").strip()
     if title:
@@ -510,31 +499,34 @@ def upload_paper(request, question_id):
     if request.method != "POST":
         return redirect("question", question_id)
 
-    f = request.FILES.get("file")
-    if not f:
+    fs = request.FILES.getlist("file")
+    if not fs:
         messages.error(request, "No file received.")
         return redirect("question", question_id)
 
-    # 1) Physically save the PDF
-    paper = UploadedPaper.objects.create(
-        review=review,
-        title=os.path.splitext(os.path.basename(f.name))[0],
-        file=f,
-    )
+    # Iterate through f files:
+    for f in fs:
+        # 1) Physically save the PDF
+        paper = UploadedPaper.objects.create(
+            review=review,
+            title=os.path.splitext(os.path.basename(f.name))[0],
+            file=f,
+        )
 
-    # 2) Create an Entry, attach it to the Review, and link it to the UploadedPaper in the backend
-    entry = Entry.objects.create(description="", uploaded_paper=paper)
-    review.entries.add(entry)
+        # 2) Create an Entry, attach it to the Review, and link it to the UploadedPaper in the backend
+        entry = Entry.objects.create(description="", uploaded_paper=paper)
+        review.entries.add(entry)
 
-    # 3) Only write the file_name column (no longer write file_url)
-    file_name_col, _ = Column.objects.get_or_create(name="file_name")
-    review.columns.add(file_name_col)
-    Value.objects.create(entry=entry, column=file_name_col, value=os.path.basename(paper.file.name))
+        # 3) Only write the file_name column (no longer write file_url)
+        file_name_col, _ = Column.objects.get_or_create(name="file_name")
+        review.columns.add(file_name_col)
+        Value.objects.create(entry=entry, column=file_name_col, value=os.path.basename(paper.file.name))
 
-    messages.success(request, f"Uploaded: {os.path.basename(paper.file.name)}")
+        messages.success(request, f"Uploaded: {os.path.basename(paper.file.name)}")
 
-    # log: log paper upload (New_Paper)
-    _append_log("New_Paper", os.path.basename(paper.file.name))
+        # log: log paper upload (New_Paper)
+        _append_log("New_Paper", os.path.basename(paper.file.name))
+
     return redirect("question", question_id)
 
 @require_http_methods(["DELETE"])
