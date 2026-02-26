@@ -10,6 +10,18 @@
 
   <!-- Modal Styling -->
   <style>
+    body {
+    padding-bottom: 100px;
+  max-width: 96% !important; 
+  
+  margin-left: auto !important;
+  margin-right: auto !important;
+
+}
+
+#paper-table-container {
+  width: 100%;
+}
     .modal { display:none; position:fixed; z-index:1000; left:0; top:0; width:100%; height:100%; background:rgba(0,0,0,.6); }
     .modal-content {
       background:#fff; margin:10% auto; padding:30px; border:1px solid #888;
@@ -50,14 +62,14 @@
     word-break: break-word !important;
     overflow-wrap: anywhere !important;
   }
-  .tabulator-cell.has-edited-badge {
+  /* .tabulator-cell.has-edited-badge {
     padding-bottom: var(--edited-badge-space, 22px) !important;
   }
   .cell-edited-badge {
   display: inline-block;
   line-height: 16px;
   height: 18px;
-  }
+  } */
 
   /* Reuse your .modal full-screen backdrop; add a spinner keyframe */
   @keyframes spin { to { transform: rotate(360deg); } }
@@ -189,6 +201,96 @@
   }
 
 
+/* 1. 待处理状态 (Pending): 半透明，不可点击/编辑 */
+.lignin-row-pending {
+  opacity: 0.6;
+  pointer-events: none; /* 禁止鼠标交互 */
+  background-color: #f5f5f5;
+  transition: opacity 0.3s;
+}
+
+/* 2. 进行中状态 (Processing): 高亮，显示忙碌光标 */
+.lignin-row-processing {
+  background-color: #e6f7ff !important; /* 浅蓝色高亮 */
+  pointer-events: none;
+  cursor: wait;
+  position: relative;
+}
+
+/* 可以在进行中的行首添加一个小的左边框指示器 */
+.lignin-row-processing::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background-color: #1890ff;
+  z-index: 10;
+}
+
+/* 3. 锁定表头: 禁止排序和筛选 */
+.header-locked {
+  pointer-events: none;
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+/* 进度条区域样式 */
+.gen-status-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: 15px;
+  padding: 4px 10px;
+  background: #f0f0f0;
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+
+.gen-progress-text {
+  font-weight: bold;
+  color: #333;
+}
+.tabulator-edit-select-list, .tabulator-edit-area {
+    min-height: 100px !important; 
+    line-height: 1.5 !important;
+}
+.tabulator-col-content {
+    /* Ensure the tabulator header cell can accommodate vertical content */
+    height: auto !important; 
+}
+
+.custom-header-container {
+    display: flex;
+    flex-direction: column; /* Stack items vertically */
+    align-items: center;    /* Center horizontally */
+    justify-content: center;
+    padding-top: 5px;
+    padding-bottom: 5px;
+    width: 100%;
+}
+
+.header-edit-btn {
+    font-size: 10px;
+    padding: 1px 6px;
+    margin-bottom: 4px; /* Space between button and text */
+    cursor: pointer;
+    background-color: #f0f0f0;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    line-height: 1.2;
+    color: #333;
+}
+
+.header-edit-btn:hover {
+    background-color: #e0e0e0;
+}
+
+/* Ensure the delete (X) button stays in the corner */
+.column-remove-button {
+    /* The existing JS sets absolute position, ensure parent is relative */
+}
   </style>
 
   <script>
@@ -202,40 +304,34 @@
 
   <h2>{{ question }}</h2>
 
+  <p>The table below is an AI tool designed to assist with screening and organizing paper information. Each row corresponds to one reference, and each column corresponds to one question.</p>
+
   <ul>
-    <li><b>Current Papers</b> is a list of papers currently in the review.</li>
-    <li><b>Search</b> lets you add papers by name or keyword.</li>
-    <li><b>Snowball</b> lets you search papers using the ones already in the dataset.</li>
+    <li>Click <strong>Upload New Paper</strong> to upload a new paper and create the corresponding row.</li>
+    <li>Click <strong>Create New Column</strong> to create a new question and add the corresponding column.</li>
+    <li>Click <strong>Generate Answers</strong> to submit the questions to the AI row by row and return an answer for each question.</li>
   </ul>
 
   <div>
     <h3>Current Papers</h3>
     <div class="toolbar">
-      <button id="btn-upload" onclick="toggleUploadModal(true)">Upload New Paper</button>
+      <button id="btn-upload" class="global-action-btn" onclick="toggleUploadModal(true)">Upload New Paper</button>
       <span class="sep">|</span>
-      <button onclick="location.href='/column/add/?review={{ question_id }}'">Create New Column</button>
+      <button class="global-action-btn" onclick="toggleColumnModal(true)">Create New Column</button>
+      
       <button id="btn-generate" onclick="generateAnswers()">Generate Answers</button>
+    
+      <span id="gen-status-container" class="gen-status-bar" style="display:none;">
+        <span style="display:inline-block; width:12px; height:12px; border:2px solid #666; border-top-color:transparent; border-radius:50%; animation:spin 1s linear infinite;"></span>
+        
+        <span id="gen-progress-text" class="gen-progress-text">Processing 0/0...</span>
+        
+        <button id="btn-stop-gen" onclick="stopGenerationRequest()" style="margin-left:8px; padding:2px 8px; background:#ff4d4f; color:white; border:none; border-radius:3px; cursor:pointer;">Stop</button>
+      </span>
     </div>
     <div id="paper-table-container">
       <div id="paper-table"></div>
     </div>
-  </div>
-
-  <div>
-    <h3 id="h3-search">Search</h3>
-    <form id="find">
-      <label for="find-query">Search: </label><input id="find-query">
-      <input type="submit">
-    </form>
-    <div id="find-results"></div>
-  </div>
-
-  <div>
-    <h3>Snowball</h3>
-    <form id="snowball">
-      <input type="submit"/>
-    </form>
-    <div id="snowball-results"></div>
   </div>
 
   <!-- Upload Modal (EAV: file-only) -->
@@ -245,13 +341,83 @@
     <form method="POST" enctype="multipart/form-data" action="{% url 'upload-paper' question_id=question.id %}">
       {% csrf_token %}
       <label>PDF File:</label><br>
-      <input type="file" name="file" accept="application/pdf" required><br><br>
+      <input type="file" name="file" accept="application/pdf" multiple required>
       <button type="submit">Upload</button>
       <button type="button" onclick="toggleUploadModal(false)">Cancel</button>
     </form>
   </div>
 </div>
 
+<div id="columnModal" class="modal">
+  <div class="modal-content">
+    <span class="close" onclick="toggleColumnModal(false)">&times;</span>
+    <h3>Create New Column</h3>
+    
+    <form id="createColumnForm" method="POST" action="{% url 'column-create' %}" autocomplete="off">
+      {% csrf_token %}
+      
+      <input type="hidden" name="review_to_add_to" value="{{ question_id }}">
+
+      <div style="margin-bottom: 15px;">
+        <label for="col-name" style="font-weight:bold;">Column name (Summary):</label><br>
+        <input type="text" id="col-name" name="name" required style="width: 100%; padding: 8px; margin-top: 5px;">
+        <small style="color:#666;">Short title for the table header.</small>
+      </div>
+
+      <div style="margin-bottom: 15px;">
+        <label for="col-desc" style="font-weight:bold;">Description (The Question):</label><br>
+        
+        <textarea 
+            id="col-desc" 
+            name="description" 
+            rows="4" 
+            required 
+            style="width: 100%; padding: 8px; margin-top: 5px; resize: none;"
+        ></textarea>
+        
+        <small style="color:#666;">The actual question prompt sent to the LLM.</small>
+      </div>
+
+      <div style="text-align: right;">
+        <button type="button" onclick="toggleColumnModal(false)" style="margin-right: 10px;">Cancel</button>
+        <button type="submit" style="background-color: #007bff; color: white; border: none; padding: 8px 16px; border-radius: 4px;">Create</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="editColumnModal" class="modal">
+  <div class="modal-content">
+    <span class="close" onclick="toggleEditColumnModal(false)">&times;</span>
+    <h3>Edit Column</h3>
+    
+    <form id="editColumnForm" onsubmit="handleEditColumnSubmit(event)">
+      <input type="hidden" id="edit-col-id" name="column_id">
+      <input type="hidden" id="edit-col-orig-desc" name="original_description">
+
+      <div style="margin-bottom: 15px;">
+        <label for="edit-col-name" style="font-weight:bold;">Column name (Summary):</label><br>
+        <input type="text" id="edit-col-name" name="name" required style="width: 100%; padding: 8px; margin-top: 5px;">
+      </div>
+
+      <div style="margin-bottom: 15px;">
+        <label for="edit-col-desc" style="font-weight:bold;">Description (The Question):</label><br>
+        <textarea 
+            id="edit-col-desc" 
+            name="description" 
+            rows="4" 
+            required 
+            style="width: 100%; padding: 8px; margin-top: 5px; resize: none;"
+        ></textarea>
+      </div>
+
+      <div style="text-align: right;">
+        <button type="button" onclick="toggleEditColumnModal(false)" style="margin-right: 10px;">Cancel</button>
+        <button type="submit" style="background-color: #007bff; color: white; border: none; padding: 8px 16px; border-radius: 4px;">Save Changes</button>
+      </div>
+    </form>
+  </div>
+</div>
 
   <!-- Replace Modal -->
   <div id="replaceModal" class="modal">
@@ -330,188 +496,387 @@
 
     // Executed after clicking “Generate Answers”
     // process rows one by one, only sending unedited columns for each row
-    async function generateAnswers() {
-      const table = getPaperTable();
-      if (!table) {
-        alert("WARNING: Table not initiated.");
-        return;
+/* --- Replace the script logic in question.html --- */
+
+let stopGeneration = false; // 全局标志位
+
+// 用户点击 Stop 按钮时调用
+function stopGenerationRequest() {
+  if (confirm("Stop answer generation? Completed rows will be saved.")) {
+    stopGeneration = true;
+    const stopBtn = document.getElementById("btn-stop-gen");
+    if (stopBtn) {
+      stopBtn.textContent = "Stopping...";
+      stopBtn.disabled = true;
+    }
+  }
+}
+
+// 辅助：切换全局按钮的禁用状态
+function toggleGlobalInteraction(disabled) {
+  // 1. 禁用工具栏按钮
+  document.querySelectorAll('.global-action-btn').forEach(btn => btn.disabled = disabled);
+  const genBtn = document.getElementById('btn-generate');
+  if (genBtn) genBtn.disabled = disabled;
+
+  // 2. 锁定表头 (禁止排序)
+  const header = document.querySelector('.tabulator-header');
+  if (header) {
+    if (disabled) header.classList.add('header-locked');
+    else header.classList.remove('header-locked');
+  }
+
+  // 3. 锁定表格内的删除/移除列按钮 (可选，通过 CSS class 查找)
+  // 如果你有特定的 class 用于删除按钮，可以在这里禁用它们
+  // document.querySelectorAll('.delete-btn').forEach(b => b.disabled = disabled);
+}
+
+// 辅助：设置行的视觉状态
+function setRowState(row, state) {
+  // 注意：Tabulator 使用虚拟 DOM，row.getElement() 可能返回 null（如果行在屏幕外）
+  // 但对于 'processing' 状态，我们通常会先 scrollTo，所以通常能获取到元素
+  const el = row.getElement();
+  if (!el) return; 
+
+  // 清除旧状态
+  el.classList.remove('lignin-row-pending', 'lignin-row-processing');
+
+  if (state === 'pending') {
+    el.classList.add('lignin-row-pending');
+  } else if (state === 'processing') {
+    el.classList.add('lignin-row-processing');
+  }
+  // state === 'normal' 则什么都不加，恢复默认
+}
+
+
+async function generateAnswers() {
+  const table = getPaperTable();
+  if (!table) { alert("WARNING: Table not initiated."); return; }
+
+  const rows = table.getData() || []; // 获取数据
+  // 获取所有行组件（Row Components），用于操作 UI
+  const rowComponents = table.getRows(); 
+  const total = rows.length;
+
+  if (total === 0) { alert("No rows to process."); return; }
+
+  // 1. 初始化 UI
+  stopGeneration = false;
+  toggleGlobalInteraction(true); // 禁用全局操作
+  
+  const statusContainer = document.getElementById('gen-status-container');
+  const progressText = document.getElementById('gen-progress-text');
+  const stopBtn = document.getElementById('btn-stop-gen');
+  
+  if (statusContainer) statusContainer.style.display = "inline-flex";
+  if (stopBtn) {
+    stopBtn.disabled = false; 
+    stopBtn.textContent = "Stop";
+  }
+
+  // 将所有行标记为 Pending (灰色不可点)
+  // 注意：由于虚拟滚动，屏幕外的行可能没有 Element，但没关系，
+  // 只要它们滚入屏幕，我们希望它们是锁定的。
+  // Tabulator 的行样式持久化比较复杂，这里我们主要处理“当前屏幕内”的反馈。
+  rowComponents.forEach(r => setRowState(r, 'pending'));
+
+  const allColumns = table.getColumns() || [];
+  const endpoint = `/question/${encodeURIComponent(window.questionID)}/generate-request-accept/`;
+  let processedCount = 0;
+
+  try {
+    // 2. 逐行处理循环
+    for (let rowIndex = 0; rowIndex < rowComponents.length; rowIndex++) {
+      
+      // A. 检查停止标志
+      if (stopGeneration) {
+        console.log("Generation stopped by user.");
+        break;
       }
 
-      // Get all row data from Tabulator
-      const rows = table.getData() || [];
-      const total = rows.length;
+      const rowComp = rowComponents[rowIndex];
+      const rowData = rowComp.getData();
+      
+      // 更新进度文字
+      if (progressText) progressText.textContent = `Processing ${rowIndex + 1}/${total}...`;
 
-      if (total === 0) {
-        alert("No rows to process.");
-        return;
-      }
+      // B. 视觉焦点：滚动到当前行，并设为 Processing (高亮 + 锁定)
+      // scrollTo 是平滑滚动，await 等待它滚到位体验更好，但 Tabulator 的 scrollTo 不返回 Promise
+      rowComp.scrollTo(); 
+      setRowState(rowComp, 'processing');
 
-      // Helper to resolve if a cell is edited by entry id + field name.
-      // Prefer the exported window.isEdited from main.js if available.
-      function isCellEdited(entryId, field) {
-        if (!entryId || !field) return false;
-        if (typeof window.isEdited === "function") {
-          return !!window.isEdited(entryId, field);
-        }
-        // Fallback: treat as not edited if helper is not available.
-        return false;
-      }
-
-      // We will reuse the Tabulator column definitions for each row
-      const allColumns = table.getColumns() || [];
-
-      // Endpoint for backend
-      const endpoint = `/question/${encodeURIComponent(window.questionID)}/generate-request-accept/`;
-
-      // Progress and UI blocking
-      const btn = document.getElementById("btn-generate");
-      let done = 0;  // number of rows already processed (including skipped rows)
+      // 小停顿，让 UI 渲染跟上 (给用户反应时间，且确保 scrollTo 完成)
+      await new Promise(r => setTimeout(r, 100));
 
       try {
-        // Block UI while processing all rows
-        if (btn) btn.disabled = true;
-        if (typeof showBusy === "function") {
-          showBusy(`0 / ${total} completed`);
+        const entryId = rowData.entry_id;
+        const fileName = rowData.file_name;
+        // 如果没有文件名，这行就是废的，跳过
+        if (!entryId || !fileName) {
+            setRowState(rowComp, 'normal'); // 解锁
+            continue;
         }
 
-        // Process each row sequentially
-        for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
-          const row = rows[rowIndex] || {};
-          const entryId = row.entry_id;
+        const urlForRow = `/media/uploaded_papers/${encodeURIComponent(fileName)}`;
 
-          // Build URL for this row (same rule as before)
-          const fileName = row.file_name;
-          const urlForRow = fileName
-            ? `/media/uploaded_papers/${encodeURIComponent(fileName)}`
-            : "";
-
-          // If we cannot build a valid URL or entry id, treat as skipped row
-          if (!entryId || !urlForRow) {
-            done += 1;
-            if (typeof showBusy === "function") {
-              showBusy(`${done} / ${total} completed`);
-            }
-            continue;
-          }
-
-          // Collect UNEDITED column titles for this row
-          const uneditedColumnTitles = [];
-
-          for (const col of allColumns) {
-            if (!col || typeof col.getDefinition !== "function") {
-              continue;
-            }
-            const def = col.getDefinition() || {};
-            const field = def.field;
-            const title = (def.title ?? "").toString().trim();
-
-            // Skip columns without a usable field or title
-            if (!field || !title) {
-              continue;
-            }
-
-            // Skip internal / non-answer columns if needed
-            if (field === "entry_id") {
-              continue;
-            }
-
-            // Check if this cell is marked as edited (has an edited badge / locked)
-            if (isCellEdited(entryId, field)) {
-              // Edited cells must be skipped from the request payload
-              continue;
-            }
-
-            // This column is not edited for the current row, include it
-            uneditedColumnTitles.push(title);
-          }
-
-          // If all columns for this row are edited, skip sending a request
-          if (uneditedColumnTitles.length <= 1) {
-            done += 1;  // still count as completed
-            if (typeof showBusy === "function") {
-              showBusy(`${done} / ${total} completed`);
-            }
-            continue;
-          }
-
-          // Build request payload for this single row
-          const columnsObj = { columns: uneditedColumnTitles };
-          const urlsObj = { urls: [urlForRow] };
-
-          try {
-            // Send request for this row
-            const res = await fetch(endpoint, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "X-CSRFToken": (window.Cookies && Cookies.get("csrftoken")) || "",
-              },
-              body: JSON.stringify({
-                columns: columnsObj,
-                urls: urlsObj,
-              }),
-            });
-
-            if (!res.ok) {
-              const text = await res.text();
-              throw new Error(`HTTP ${res.status}: ${text}`);
-            }
-
-            const data = await res.json();
-            //console.log("server response for row", rowIndex, ":", data);
-
-            if (data.ok) {uneditedColumnTitles.length
-              console.log("[LLM text for row]", data.llm_text);
-
-              // Apply LLM results back to the table for this row
-              const tableInst = getPaperTable();
-              if (window.applyLlmTextToTabulator && tableInst) {
-                window.applyLlmTextToTabulator(
-                  data.llm_text,
-                  tableInst,
-                  (window.isEdited || (() => false))
-                );
-              } else {
-                console.warn("applyLlmTextToTabulator or table instance not ready");
-              }
-            } else {
-              console.error("Server error for row", rowIndex, ":", data.error);
-              alert("Server error: " + (data.error || "unknown"));
-              // Depending on UX, we can choose to break or continue.
-              // For now we stop the whole process on the first server-side error.
-              break;
-            }
-          } catch (rowErr) {
-            console.error("generateAnswers request failed for row", rowIndex, ":", rowErr);
-            alert("Request failed for one of the rows: " + rowErr.message);
-            // Stop the loop on network/fetch error
-            break;
-          } finally {
-            // Mark this row as completed (even if failed), update progress
-            done += 1;
-            if (typeof showBusy === "function") {
-              showBusy(`${done} / ${total} completed`);
-            }
-          }
+        // C. 收集列名 (逻辑同前，发送所有可见列，交由后端过滤)
+        const columnTitles = [];
+        for (const col of allColumns) {
+          const def = col.getDefinition() || {};
+          const field = def.field;
+          const title = (def.title ?? "").toString().trim();
+          
+          if (!field || !title) continue;
+          if (field === "entry_id" || field === "file_name" || field === "delete") continue;
+          
+          columnTitles.push(title);
         }
+
+        // 如果没有列需要生成，直接跳过
+        if (columnTitles.length === 0) {
+            setRowState(rowComp, 'normal');
+            continue;
+        }
+
+        // D. 发送请求
+        const res = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": (window.Cookies && Cookies.get("csrftoken")) || "",
+          },
+          body: JSON.stringify({
+            columns: { columns: columnTitles }, // 全量发送
+            urls: { urls: [urlForRow] },
+          }),
+        });
+
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+
+        const data = await res.json();
+
+        // E. 应用结果
+        if (data.ok) {
+           // 如果后端返回 msg 说 "All requested columns are already filled"，说明被跳过了
+           if (data.msg && data.llm_text && data.llm_text.length === 0) {
+               console.log(`Row ${rowIndex + 1} skipped (already filled).`);
+           } else {
+               // 正常更新表格
+               if (window.applyLlmTextToTabulator) {
+                 window.applyLlmTextToTabulator(data.llm_text, table);
+               }
+           }
+        } else {
+           console.error(`Error on row ${rowIndex}:`, data.error);
+           // 不打断循环，只在控制台报错，继续下一行
+        }
+
       } catch (err) {
-        console.error("generateAnswers failed:", err);
-        alert("Request failed: " + err.message);
+        console.error(`Request failed for row ${rowIndex}:`, err);
       } finally {
-        // Always unblock UI when the whole process has finished or aborted
-        if (typeof hideBusy === "function") {
-          hideBusy();
-        }
-        if (btn) btn.disabled = false;
+        // F. 当前行处理完毕：解锁 (恢复正常状态)
+        setRowState(rowComp, 'normal');
+        processedCount++;
       }
     }
+  } catch (err) {
+    console.error("Global generation error:", err);
+    alert("An error occurred during generation: " + err.message);
+  } finally {
+    // 3. 收尾工作
+    toggleGlobalInteraction(false); // 恢复全局按钮
+    if (statusContainer) statusContainer.style.display = "none";
+    
+    // 清除剩余所有行的 Pending 状态 (如果用户点了 Stop，剩下的行应该解锁)
+    rowComponents.forEach(r => {
+        const el = r.getElement();
+        if (el) el.classList.remove('lignin-row-pending', 'lignin-row-processing');
+    });
 
+    if (stopGeneration) {
+        alert(`Generation stopped. Processed ${processedCount} rows.`);
+    } else {
+        alert("Generation completed!");
+    }
+  }
+}
 
     function toggleUploadModal(show) {
       const modal = document.getElementById("uploadModal");
       if (!modal) return;
       modal.style.display = show ? "block" : "none";
     }
+
+
+
+// 1. 打开/关闭弹窗
+function toggleColumnModal(show) {
+  const modal = document.getElementById("columnModal");
+  if (!modal) return;
+  modal.style.display = show ? "block" : "none";
+  
+  // 每次打开清空输入框
+  if (show) {
+    const form = document.getElementById("createColumnForm");
+    if (form) form.reset();
+  }
+}
+
+// 2. 绑定表单提交事件 (AJAX)
+document.addEventListener("DOMContentLoaded", () => {
+  const colForm = document.getElementById("createColumnForm");
+  
+  if (colForm) {
+    colForm.addEventListener("submit", async (e) => {
+      e.preventDefault(); // 阻止默认的页面跳转提交
+      
+      const formData = new FormData(colForm);
+      const actionUrl = colForm.action;
+      const submitBtn = colForm.querySelector('button[type="submit"]');
+      
+      try {
+        // 禁用按钮防止重复提交
+        if(submitBtn) { submitBtn.disabled = true; submitBtn.textContent = "Creating..."; }
+
+        const res = await fetch(actionUrl, {
+          method: "POST",
+          body: formData,
+          headers: {
+            "X-Requested-With": "XMLHttpRequest", // 这是一个好习惯，标记为 AJAX
+            // 注意：使用 FormData 时不要手动设置 Content-Type，浏览器会自动处理 boundary
+          },
+        });
+
+        const data = await res.json();
+
+        if (res.ok && data.ok) {
+          // 成功！
+          toggleColumnModal(false);
+          
+          // 核心：调用 main.js 中定义的 reloadPapers() 来刷新表格列
+          // 这会重新请求 /question/<id>/papers/ 并重建 Tabulator
+          if (typeof reloadPapers === "function") {
+            reloadPapers(() => {
+              // 在这里调用 generateAnswers
+              if (typeof generateAnswers === "function") {
+                  // 给用户一个小提示，或者直接开始
+                  console.log("Column created, auto-generating answers...");
+                  generateAnswers(); 
+              }
+          }); 
+          } else {
+            location.reload(); 
+          }
+          
+          // 可选：显示成功提示
+          // alert("Column created!"); 
+        } else {
+          // 失败
+          console.error(data);
+          alert("Error creating column: " + (data.error || "Unknown error"));
+        }
+
+      } catch (err) {
+        console.error(err);
+        alert("Network error: " + err.message);
+      } finally {
+        // 恢复按钮状态
+        if(submitBtn) { submitBtn.disabled = false; submitBtn.textContent = "Create"; }
+      }
+    });
+  }
+});
+
+function toggleEditColumnModal(show) {
+    const modal = document.getElementById("editColumnModal");
+    if(modal) modal.style.display = show ? "block" : "none";
+}
+
+// Function to open the modal and populate data (called from main.js)
+window.openEditColumnModal = function(id, name, description) {
+    const modal = document.getElementById("editColumnModal");
+    if (!modal) return;
+
+    // Populate fields
+    document.getElementById("edit-col-id").value = id;
+    document.getElementById("edit-col-name").value = name;
+    document.getElementById("edit-col-desc").value = description;
+    // Store original description for comparison logic
+    document.getElementById("edit-col-orig-desc").value = description;
+
+    toggleEditColumnModal(true);
+};
+
+// Handle Edit Form Submission
+async function handleEditColumnSubmit(e) {
+    e.preventDefault();
+    
+    const form = e.target;
+    const formData = new FormData(form);
+    const colId = formData.get("column_id");
+    const newDesc = formData.get("description");
+    const oldDesc = formData.get("original_description");
+    const submitBtn = form.querySelector('button[type="submit"]');
+
+    // Logic: Check if description changed
+    const descriptionChanged = (newDesc.trim() !== oldDesc.trim());
+
+    try {
+        if(submitBtn) { submitBtn.disabled = true; submitBtn.textContent = "Saving..."; }
+
+        // Construct the URL (Assuming a pattern, adjust to your actual backend URL)
+        // BACKEND TODO: Implement this endpoint
+        const url = `/review/${encodeURIComponent(window.questionID)}/columns/${encodeURIComponent(colId)}/edit/`;
+
+        // We add a flag to the payload so backend knows if it should clear cells
+        // Or we rely on frontend comparison. Here we send the data.
+        const res = await fetch(url, {
+             method: "POST",
+             body: formData,
+             headers: {
+                 "X-CSRFToken": Cookies.get('csrftoken'),
+                 "X-Requested-With": "XMLHttpRequest",
+             }
+        });
+
+        if (!res.ok) {
+             const txt = await res.text();
+             throw new Error(`HTTP ${res.status}: ${txt}`);
+        }
+
+        const data = await res.json();
+        
+        if (data.ok) {
+            toggleEditColumnModal(false);
+            
+            // Reload papers to reflect name changes
+            reloadPapers(() => {
+                // REQUIREMENT 3: If description changed, trigger generation
+                if (descriptionChanged) {
+                    console.log("Description changed. Triggering generation...");
+                    
+                    // Optional: You might want to confirm with the user before regenerating?
+                    // if(confirm("Description changed. Regenerate answers for this column?")) { ... }
+                    
+                    if (typeof generateAnswers === "function") {
+                        generateAnswers();
+                    }
+                }
+            });
+        } else {
+            alert("Error: " + (data.error || "Unknown error"));
+        }
+
+    } catch (err) {
+        console.error(err);
+        alert("Failed to save column: " + err.message);
+    } finally {
+        if(submitBtn) { submitBtn.disabled = false; submitBtn.textContent = "Save Changes"; }
+    }
+}
 
   </script>
 

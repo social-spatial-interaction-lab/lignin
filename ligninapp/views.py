@@ -157,7 +157,7 @@ class NewColumnForm(forms.Form):
     description = forms.CharField(
         label="Description (the question it self)",
         widget=forms.Textarea(attrs={"rows": 4}),
-        required=False
+        required=True
     )
     review_to_add_to = forms.ModelChoiceField(
         queryset=Review.objects.all(),
@@ -165,42 +165,40 @@ class NewColumnForm(forms.Form):
     )
 
 
+# views.py
+
 def create_column(request):
     """
-    Render the 'create column' form on GET.
-    On POST, create a Column with name + description, then attach it to the target Review.
-    NOTE: This view expects NewColumnForm (Form version) with fields:
-          - name (CharField)
-          - description (CharField, optional)
-          - review_to_add_to (ModelChoiceField, HiddenInput)
+    Updated: Returns JsonResponse on POST for AJAX modal support.
     """
     if request.method == "POST":
         form = NewColumnForm(request.POST)
         if form.is_valid():
-            # Create the Column with the new 'description' field.
+            # Create the Column
             column = Column.objects.create(
                 name=form.cleaned_data["name"],
                 description=form.cleaned_data.get("description", ""),
             )
 
-            # Attach to the specified Review (if provided).
+            # Attach to Review
             review = form.cleaned_data["review_to_add_to"]
             if review:
                 review.columns.add(column)
 
-            # log: log column creation (New_Question)
+            # Log
             desc = column.description if column.description else "Null"
             _append_log("New_Question", f"{column.name} | {desc}")
 
-            # Redirect back to the review page (keeps old behavior).
-            return HttpResponseRedirect(review.get_absolute_url())
+            # === 修改点：返回 JSON 而不是重定向 ===
+            return JsonResponse({"ok": True, "msg": "Column created successfully"})
+        else:
+            # 如果表单验证失败，返回错误信息
+            return JsonResponse({"ok": False, "error": form.errors.as_json()}, status=400)
     else:
-        # Pre-fill the hidden review_to_add_to from the querystring (?review=<id>)
+        # GET 请求保持不变（如果有人直接访问 URL，依然渲染旧模板，或者你可以选择删除这部分）
         review_id = request.GET.get("review")
         form = NewColumnForm(initial={"review_to_add_to": review_id})
-
-    # Render the same template as before.
-    return render(request, "ligninapp/column_form.html", {"form": form})
+        return render(request, "ligninapp/column_form.html", {"form": form})
 
 
 def add_paper(request, question_id, paper_id):
@@ -251,11 +249,13 @@ def get_papers(request, question_id):
 
     review = get_object_or_404(Review, id=question_id)
 
-    columns_qs = review.columns.all().only("id", "name")
-    columns = list(columns_qs.values_list("id", "name"))  # [(id, name), ...]
-    col_id_to_name = {cid: name for cid, name in columns}
-    col_ids = [cid for cid, _ in columns]
-    col_names = [name for _, name in columns]
+    # Include 'description' in the query
+    columns_qs = review.columns.all().only("id", "name", "description")
+    # Convert to a list of dictionaries immediately for easier JSON serialization
+    columns_meta = list(columns_qs.values("id", "name", "description"))
+    col_id_to_name = {c['id']: c['name'] for c in columns_meta}
+    col_ids = [c['id'] for c in columns_meta]
+    col_names = [c['name'] for c in columns_meta]
 
     entries_qs = (
         review.entries
@@ -263,42 +263,34 @@ def get_papers(request, question_id):
             Prefetch(
                 "value_set",
                 # Prefetch the 'edited' field as well to avoid N+1 queries later
-                queryset=Value.objects.filter(column_id__in=col_ids).only("column_id", "value", "edited"),
+                queryset=Value.objects.filter(column_id__in=col_ids).only("column_id", "value"),
             )
         )
         .only("id")
     )
 
     rows = []
-    edited_map = {}  # NEW: { "<entry_id>": { "<column_name>": true, ... }, ... }
+    #edited_map = {}  # NEW: { "<entry_id>": { "<column_name>": true, ... }, ... }
 
     for entry in entries_qs:
         row = {"entry_id": entry.id}
         for name in col_names:
             row[name] = ""
-        # NEW: Prepare a sparse dictionary for this entry's 'edited' state (record only True; default is treated as False)
-        emap_for_entry = {}
 
-        for v in entry.value_set.all():
-            name = col_id_to_name.get(v.column_id)
-            if name:
-                row[name] = v.value or ""
-                # NEW: If this cell is locked by the user, record it as True (frontend defaults to False)
-                if getattr(v, "edited", False):
-                    emap_for_entry[name] = True
-
-        if emap_for_entry:
-            # Write only if there is any True value to reduce payload; frontend can treat missing ones as False
-            edited_map[str(entry.id)] = emap_for_entry
-
+        for val in entry.value_set.all():
+            c_name = col_id_to_name.get(val.column_id)
+            if c_name:
+                row[c_name] = val.value
         rows.append(row)
 
     payload = {
         "columns": col_names,  # Compatible with the old frontend
-        "columns_meta": [{"id": cid, "name": name} for cid, name in columns],
+        # === MODIFICATION START ===
+        # Use the list of dictionaries we prepared earlier
+        "columns_meta": columns_meta, 
+        # === MODIFICATION END ===
         "rows": rows,
-        # NEW: Allow the frontend to render the “Edited” badge immediately upon initialization
-        "edited_map": edited_map,
+
     }
     return JsonResponse(payload, safe=False)
 
@@ -308,10 +300,8 @@ def get_papers(request, question_id):
 @require_POST
 def edit_annotation(request, entry_id, column_pk):
     """
-    User edits a cell from the frontend: always allow writing, 
-    and (by default) set edited=True.
-    Optional parameter: lock_after_save (bool, default True)
-    Body: {"value": "...", "notes": "...", "lock_after_save": true/false}
+    User edits a cell from the frontend.
+    Updated: Removed 'lock_after_save' and 'edited' logic.
     """
     # --- DEBUG START ---
     try:
@@ -320,6 +310,7 @@ def edit_annotation(request, entry_id, column_pk):
         raw_body = f"<decode error: {e}>"
     logger.info(f"[edit_annotation] raw_body={raw_body} entry_id={entry_id} column_pk={column_pk}")
     # --- DEBUG END ---
+    
     try:
         payload = json.loads(request.body.decode("utf-8")) if request.body else {}
     except json.JSONDecodeError:
@@ -327,23 +318,27 @@ def edit_annotation(request, entry_id, column_pk):
 
     new_value = payload.get("value", "")
     new_notes = payload.get("notes", None)
-    lock_after_save = payload.get("lock_after_save", True)
+
+    # lock_after_save = payload.get("lock_after_save", True)
 
     entry, column, val = _get_value_by_ids(entry_id, column_pk, create_if_missing=True)
-    # User edit: always allow writing value/notes; 
-    # the 'edited' flag does not block user edits
+    
     val.value = new_value
     if new_notes is not None:
         val.notes = new_notes
 
-    if lock_after_save:
-        val.edited = True
+    # if lock_after_save:
+    #     val.edited = True
 
-    logger.info(f"[edit_annotation] entry={entry_id} col={column_pk} lock_after_save={lock_after_save} -> edited will be {True if lock_after_save else val.edited}")
-    val.save(update_fields=["value", "notes", "edited"] if new_notes is not None else ["value", "edited"])
+    logger.info(f"[edit_annotation] entry={entry_id} col={column_pk} value updated")
+
+    update_fields = ["value"]
+    if new_notes is not None:
+        update_fields.append("notes")
+    
+    val.save(update_fields=update_fields)
 
     # log: log edit operation (Edit_Answer)
-    # Get file name from the 'file_name' column of this entry
     file_name = (
         Value.objects
         .filter(entry_id=entry.id, column__name="file_name")
@@ -355,62 +350,13 @@ def edit_annotation(request, entry_id, column_pk):
     col_name = column.name if column and column.name else "Null"
     _append_log("Edit_Answer", f"{file_name} | {col_name}")
 
-
-
     return JsonResponse({
         "ok": True,
         "entry_id": entry.id,
         "column_pk": column.pk,
         "value": val.value,
         "notes": val.notes,
-        "edited": val.edited,
     })
-
-@require_POST
-def set_value_edited(request, entry_id, column_pk):
-    """
-    set the edited flag as True or False
-    Body: {"edited": true/false}
-    success return: {"ok": true, "entry_id": ..., "column_pk": ..., "edited": ...}
-    """
-    print("1")
-    try:
-        payload = json.loads(request.body.decode("utf-8")) if request.body else {}
-    except json.JSONDecodeError:
-        return JsonResponse({"ok": False, "error": "Invalid JSON."}, status=400)
-
-    if "edited" not in payload or not isinstance(payload["edited"], bool):
-        return JsonResponse({"ok": False, "error": "Field 'edited' (bool) is required."}, status=400)
-
-    entry, column, val = _get_value_by_ids(entry_id, column_pk, create_if_missing=True)
-
-    
-    #logger.info(f"[set_value_edited] entry={entry_id} col={column_pk} payload={payload}")
-    prev = val.edited
-    val.edited = payload["edited"]
-    val.save(update_fields=["edited"])
-    #logger.info(f"[set_value_edited] entry={entry_id} col={column_pk} edited {prev} -> {val.edited}")
-
-    # log: log when the edited flag is removed (Remove_Badge)
-    if prev and not val.edited:
-        file_name = (
-            Value.objects
-            .filter(entry_id=entry.id, column__name="file_name")
-            .values_list("value", flat=True)
-            .first()
-        )
-        if not file_name:
-            file_name = "Null"
-        col_name = column.name if column and column.name else "Null"
-        _append_log("Remove_Badge", f"{file_name} | {col_name}")
-
-    return JsonResponse({
-        "ok": True,
-        "entry_id": entry.id,
-        "column_pk": column.pk,
-        "edited": val.edited,
-    })
-
 
 def reject_paper(request, question_id, paper_id):
     question = get_object_or_404(Review, id=question_id)
@@ -467,17 +413,6 @@ def get_snowball(request, question_id):
 
     return JsonResponse({"data": sorted([i for i in response if i], key=lambda x: x["occurrence_number"], reverse=True)})
 
-def upload_paper(request):
-    if request.method == 'POST':
-        form = UploadedPaperForm(request.POST, request.FILES)
-        if form.is_valid():
-            form.save()
-            return HttpResponseRedirect('/')  # adjust redirect as needed
-    else:
-        form = UploadedPaperForm()
-    return render(request, 'ligninapp/upload_paper.html', {'form': form})
-
-
 def create_review(request):
     title = request.GET.get("title", "").strip()
     if title:
@@ -510,31 +445,43 @@ def upload_paper(request, question_id):
     if request.method != "POST":
         return redirect("question", question_id)
 
-    f = request.FILES.get("file")
-    if not f:
+    # 1. 修改点：使用 getlist 获取所有文件
+    files = request.FILES.getlist("file")
+    
+    # 如果列表为空，尝试回退到 get (兼容旧版单文件上传，虽非必须但更稳健)
+    if not files:
+        f = request.FILES.get("file")
+        if f:
+            files = [f]
+
+    if not files:
         messages.error(request, "No file received.")
         return redirect("question", question_id)
 
-    # 1) Physically save the PDF
-    paper = UploadedPaper.objects.create(
-        review=review,
-        title=os.path.splitext(os.path.basename(f.name))[0],
-        file=f,
-    )
+    # 2. 修改点：遍历文件列表，为每个文件执行创建逻辑
+    count = 0
+    for f in files:
+        # A) 保存文件实体
+        paper = UploadedPaper.objects.create(
+            review=review,
+            title=os.path.splitext(os.path.basename(f.name))[0],
+            file=f,
+        )
 
-    # 2) Create an Entry, attach it to the Review, and link it to the UploadedPaper in the backend
-    entry = Entry.objects.create(description="", uploaded_paper=paper)
-    review.entries.add(entry)
+        # B) 创建 Entry 并关联
+        entry = Entry.objects.create(description="", uploaded_paper=paper)
+        review.entries.add(entry)
 
-    # 3) Only write the file_name column (no longer write file_url)
-    file_name_col, _ = Column.objects.get_or_create(name="file_name")
-    review.columns.add(file_name_col)
-    Value.objects.create(entry=entry, column=file_name_col, value=os.path.basename(paper.file.name))
+        # C) 写入 file_name 列
+        file_name_col, _ = Column.objects.get_or_create(name="file_name")
+        review.columns.add(file_name_col)
+        Value.objects.create(entry=entry, column=file_name_col, value=os.path.basename(paper.file.name))
 
-    messages.success(request, f"Uploaded: {os.path.basename(paper.file.name)}")
+        # D) 记录日志
+        _append_log("New_Paper", os.path.basename(paper.file.name))
+        count += 1
 
-    # log: log paper upload (New_Paper)
-    _append_log("New_Paper", os.path.basename(paper.file.name))
+    messages.success(request, f"Uploaded {count} file(s).")
     return redirect("question", question_id)
 
 @require_http_methods(["DELETE"])
@@ -574,6 +521,46 @@ def remove_column_from_review(request, review_id, column_id):
 
     # log: log column deletion (Delete_Question)
     _append_log("Delete_Question", f"{col_name} | {col_desc}")
+
+    return JsonResponse({"ok": True})
+
+#2.3 edit-column
+@require_http_methods(["POST"])
+@transaction.atomic
+def edit_column_in_review(request, review_id, column_id):
+    review = get_object_or_404(Review, pk=review_id)
+    column = get_object_or_404(Column, pk=column_id)
+
+    # 1. Verify column belongs to this review
+    if not review.columns.filter(pk=column.pk).exists():
+        return JsonResponse({"ok": False, "error": "Column not in this review"}, status=400)
+
+    # 2. Get data from form (Multipart/form-data from frontend)
+    new_name = request.POST.get("name", "").strip()
+    new_desc = request.POST.get("description", "").strip()
+
+    if not new_name:
+        return JsonResponse({"ok": False, "error": "Column name cannot be empty"}, status=400)
+
+    old_desc = (column.description or "").strip()
+    old_name = column.name
+    
+    # 3. Update the column
+    column.name = new_name
+    column.description = new_desc
+    column.save()
+
+    # 4. Check if description changed
+    if old_desc != new_desc:
+        entry_ids = review.entries.values_list("id", flat=True)
+        deleted_count, _ = Value.objects.filter(
+            column=column, 
+            entry_id__in=entry_ids
+        ).delete()
+        
+        _append_log("Edit_Column_Reset", f"{new_name} | {new_desc} | Description changed. Cleared {deleted_count} cells.")
+    else:
+        _append_log("Edit_Column", f"{old_name} | {new_name} | Name updated only.")
 
     return JsonResponse({"ok": True})
 
@@ -651,62 +638,140 @@ def register(request):
         form = UserCreationForm()
     return render(request, 'registration/register.html', {'form': form})
 
-@require_http_methods(["POST"])
+@require_POST
 def generate_request_accept_view(request, question_id):
     try:
         # log: log when LLM answer generation starts
         _append_log("Generate_Answer", None)
+        
+        # 1. 解析请求体
         payload = json.loads(request.body.decode("utf-8"))
         columns_obj = payload.get("columns", {}) or {}
-        urls_obj    = payload.get("urls", {})    or {}
+        urls_obj    = payload.get("urls", {})    or {} # 格式通常是 {"urls": ["http://..."]}
 
-        # --- NEW: Build columns_obj from Column.description instead of raw frontend names ---
-        #  Extract column names (keep order)
+        review = get_object_or_404(Review, id=question_id)
+        
+        # --- 步骤 A: 提取并解析列名 (保持原有逻辑) ---
         incoming_names = []
         raw_list = columns_obj.get("columns", []) or []
         for n in raw_list:
             s = (n or "").strip()
-            if not s:
-                continue
-            # Skip reserved/internal columns
-            if s in {"file_name", "File name", "Entry ID"}:
-                continue
+            if not s: continue
+            if s in {"file_name", "File name", "Entry ID"}: continue
             incoming_names.append(s)
 
-        #  Query Column by name (single pass)
-        #    Build a mapping: name -> Column
+        # 批量查找 Column 对象
         found_cols = {c.name: c for c in Column.objects.filter(name__in=incoming_names).only("name", "description", "column_info")}
 
-        #  Assemble descriptions in the SAME order as incoming_names
-        #    Fallback: description -> column_info -> name
+        # --- 步骤 B: [新功能] 针对单行请求进行过滤 ---
+        # 只有当请求中正好包含 1 个 URL 时，我们才启用这个“智能跳过”功能。
+        # 如果将来恢复批量请求，此逻辑会自动失效（或者需要改为取并集，这里暂不处理）。
+        url_list = urls_obj.get("urls", [])
+        
+        filtered_names = [] # 最终要发给 LLM 的列名列表
+        
+        if len(url_list) == 1:
+            target_url = url_list[0]
+            
+            # 1. 从 URL 解析文件名 (逻辑同 persist_answers)
+            base = os.path.basename(target_url)
+            filename = unquote(base).strip()
+            
+            # 2. 找到对应的 Entry
+            # 需要先获取或创建 file_name 列对象来辅助查找
+            file_name_col = Column.objects.filter(name="file_name").first()
+            
+            entry = None
+            if file_name_col and filename:
+                # 查找当前 Review 下，匹配 file_name 的 Entry
+                # 注意：这里我们只读，不创建。如果 Entry 不存在，说明都没上传过，自然全是空的，不用过滤。
+                entry_id = Value.objects.filter(
+                    column=file_name_col, 
+                    value=filename, 
+                    entry__review=review
+                ).values_list("entry_id", flat=True).first()
+                
+                if entry_id:
+                    entry = Entry.objects.get(pk=entry_id)
+
+            # 3. 检查每一列是否为空
+            if entry:
+                # 预先获取该 Entry 下所有相关列的 Value，避免 N+1 查询
+                # 获取我们关心的列的 ID 列表
+                relevant_col_ids = [c.id for c in found_cols.values()]
+                existing_values = {
+                    v.column_id: v.value 
+                    for v in Value.objects.filter(entry=entry, column_id__in=relevant_col_ids)
+                }
+
+                for name in incoming_names:
+                    col = found_cols.get(name)
+                    should_generate = True
+                    
+                    if col:
+                        val_str = existing_values.get(col.id)
+                        # 核心判断：如果值存在且剔除空格后不为空，则跳过
+                        if val_str is not None and val_str.strip() != "":
+                            should_generate = False
+                    
+                    if should_generate:
+                        filtered_names.append(name)
+            else:
+                # 如果找不到 Entry（理论上不应该发生），则无法判断，默认全生成
+                filtered_names = incoming_names
+        else:
+            # 如果 URL 列表为空或大于 1，为了安全起见，不执行过滤，保留原有行为
+            filtered_names = incoming_names
+
+
+        # --- 步骤 C: 如果过滤后没有剩余列，直接返回成功 ---
+        if not filtered_names:
+            _append_log("Answer_Obtained", "Skipped (All Filled)")
+            return JsonResponse({
+                "ok": True,
+                "llm_text": [], # 前端会认为没有数据更新，这很安全
+                "msg": "All requested columns are already filled."
+            })
+
+        # --- 步骤 D: 构建发给 LLM 的 Column Description 列表 ---
+        # 注意：这里我们只为 filtered_names 构建描述
         desc_list = []
-        for name in incoming_names:
+        for name in filtered_names:
             col = found_cols.get(name)
             if col is not None:
                 desc = (col.description or col.column_info or name) or ""
             else:
-                # Not found in DB (unexpected): fall back to the original name
                 desc = name
             desc_list.append(desc.strip())
 
-        # Build the final columns payload for LLM
         columns_for_llm = {"columns": desc_list}
-
-        # === Call the LLM with descriptions instead of raw names ===
+        
+        # --- 步骤 E: 调用 LLM (传入过滤后的列) ---
+        # 注意：LLM 此时只会收到“真正为空”的那些问题的描述
         results_per_url = LLM_entrance(columns_for_llm, urls_obj, include_highlights=True)
 
-        # 2) Split (for frontend compatibility)
+        # --- 步骤 F: 后续处理 (数据整形) ---
         qa_only, highlights_only = [], []
-        # helper: map description to Column.name (prefer cache if present)
+        
+        # 辅助函数：将描述映射回列名 (需要在循环外准备好)
+        # 因为我们过滤了列，所以这里的 desc_to_name 只需要包含我们发出去的那些列
+        temp_desc_map = {} # desc -> col_name
+        for name in filtered_names:
+            col = found_cols.get(name)
+            if col:
+                d = (col.description or col.column_info or name).strip()
+                if d: temp_desc_map[d] = name
+            else:
+                temp_desc_map[name] = name
+
         def _desc_to_name(desc: str) -> str | None:
             key = (desc or "").strip()
-            if not key:
-                return None
-            # if you created desc_to_col earlier (in persist_answers or above), reuse it
-            col = (desc_to_col.get(key) if 'desc_to_col' in locals() else None)
-            if col is None:
-                col = Column.objects.filter(description=key).only("name").first()
-            return (col.name if col else None)
+            if not key: return None
+            # 优先查本次请求的映射
+            if key in temp_desc_map: return temp_desc_map[key]
+            # 兜底查数据库 (应对 LLM 幻觉或极端情况)
+            c = Column.objects.filter(description=key).only("name").first()
+            return c.name if c else None
 
         for item in (results_per_url or []):
             qa_payload = (item or {}).get("qa", {}) or {}
@@ -718,7 +783,6 @@ def generate_request_accept_view(request, question_id):
                 k_name = _desc_to_name(k_desc)
                 if k_name:
                     mapped[k_name] = v
-                # else: skip unmapped keys (or fallback to keep description if you prefer)
 
             qa_only.append({
                 **qa_payload,
@@ -728,65 +792,40 @@ def generate_request_accept_view(request, question_id):
 
         llm_text = qa_only
 
-        # 3) Write answers into EAV (only answers, do not handle highlights)
-        review = get_object_or_404(Review, id=question_id)
-        desc_to_col = {}
-        for c in review.columns.only("id", "name", "description", "column_info"):
-            key = (c.description or c.column_info or c.name or "").strip()
-            if key:
-                desc_to_col[key] = c
-        # Column "file_name" used for locating the row (note: column name is "file_name")
+        # --- 步骤 G: 保存结果 (persist_answers) ---
+        # 这部分逻辑保持原样即可，因为它会根据 LLM 返回的结果 update 数据库。
+        # 由于我们只请求了空列，LLM 也只返回了空列的答案，所以这里只会 update 那些空列。
+        # 已有值的列不会被触碰。
+        
+        # ... (以下为原有的 persist_answers 相关准备工作) ...
         file_name_col, _ = Column.objects.get_or_create(name="file_name")
-        # If this column is not yet in the review’s column set, add it
         if not review.columns.filter(pk=file_name_col.pk).exists():
             review.columns.add(file_name_col)
-
-        # For convenience: fetch all entries of the current review first for set filtering
         review_entry_ids = set(review.entries.values_list("id", flat=True))
-
-        # Try to get LigninUser as the creator (optional)
         try:
             creator = getattr(request.user, "lignin_user", None)
         except Exception:
             creator = None
 
-        skipped_locked = []  # NEW: Record cells skipped due to edited=True, for frontend notification/debugging
-
         @transaction.atomic
         def persist_answers():
-            # Build a description -> Column cache for the current review
-            # (fallback to column_info or name if description is empty)
+            # 这里的逻辑不需要大改，直接复用原有逻辑即可
+            # 只需要确保 desc_to_col 能正确工作
             desc_to_col = {}
             for c in review.columns.only("id", "name", "description", "column_info"):
                 key = (c.description or c.column_info or c.name or "").strip()
-                if key:
-                    desc_to_col[key] = c
+                if key: desc_to_col[key] = c
 
             def resolve_column_by_desc(desc_key: str) -> Column:
-                """
-                Resolve a Column by its description (fallback to column_info/name).
-                If not found, create one (name = description for now) and add to current review.
-                """
                 key = (desc_key or "").strip()
-                if not key:
-                    return None
-
-                # 1) try current review cache
+                if not key: return None
                 col = desc_to_col.get(key)
-                if col is not None:
-                    return col
-
-                # 2) try global columns by exact description
-                col = Column.objects.filter(description=key).only("id", "name", "description").first()
-                if col is None:
-                    # 3) create a new column; use description as both name and description
+                if col: return col
+                col = Column.objects.filter(description=key).first()
+                if not col:
                     col = Column.objects.create(name=key, description=key)
-
-                # ensure it belongs to this review
                 if not review.columns.filter(pk=col.pk).exists():
                     review.columns.add(col)
-
-                # cache it
                 desc_to_col[key] = col
                 return col
 
@@ -794,50 +833,33 @@ def generate_request_accept_view(request, question_id):
                 qa = (item or {}).get("qa", {}) or {}
                 hl = (item or {}).get("highlights", {}) or {}
                 url = (qa.get("url") or "").strip()
-                if not url:
-                    continue
+                if not url: continue
 
-                # URL -> filename (decode %20, etc.)
                 base = os.path.basename(url)
                 filename = unquote(base).strip()
-                if not filename:
-                    continue
+                if not filename: continue
 
-                # Use file_name to locate the entry (limited to the current review)
                 entry_qs = (
                     Value.objects
                     .filter(column=file_name_col, value=filename, entry_id__in=review_entry_ids)
                     .values_list("entry_id", flat=True)
                 )
                 entry_id = next(iter(entry_qs), None)
-                if not entry_id:
-                    # The row may be empty or lack a file_name; you can choose to skip or create it here
-                    continue
+                if not entry_id: continue
 
                 answers_by_q = qa.get("answers_by_question") or {}
-                if not isinstance(answers_by_q, dict) or not answers_by_q:
-                    continue
-
-                # Preload the two tables "question(desc) -> highlights" for this URL
+                
                 anchors_by_q   = hl.get("anchors_by_question")   or {}
                 locations_by_q = hl.get("locations_by_question") or {}
-                doc_info       = hl.get("doc")                   or {}
-
-                # Write answers for each "question description"
+                
                 for desc_key, answer in answers_by_q.items():
                     desc_key = (desc_key or "").strip()
-                    if not desc_key:
-                        continue
-                    # Skip reserved/internal identifiers if they appear
-                    if desc_key in {"File name", "file_name", "Entry ID"}:
-                        continue
+                    if not desc_key: continue
+                    if desc_key in {"File name", "file_name", "Entry ID"}: continue
 
-                    # Use description to resolve the column
                     column = resolve_column_by_desc(desc_key)
-                    if column is None:
-                        continue
+                    if column is None: continue
 
-                    # Save or update the Value (overwrite if it already exists)
                     val_obj = (
                         Value.objects
                         .filter(entry_id=entry_id, column=column)
@@ -845,22 +867,16 @@ def generate_request_accept_view(request, question_id):
                         .first()
                     )
 
-                    # If an existing cell is locked by the user, skip overwriting
-                    if val_obj is not None and getattr(val_obj, "edited", False) is True:
-                        skipped_locked.append({"entry_id": entry_id, "column": column.name})
-                        continue
-
-                    # Create if missing (default edited=False)
                     if val_obj is None:
                         val_obj = Value(entry_id=entry_id, column=column, creator=creator)
 
                     safe_answer = (answer or "").strip()
                     if len(safe_answer) > 1000:
-                        safe_answer = safe_answer[:1000]  # Model field limit
+                        safe_answer = safe_answer[:1000]
 
                     val_obj.value = safe_answer
 
-                    # Handle highlights using the same description key
+                    # Highlights logic
                     locs = locations_by_q.get(desc_key) or []
                     rects_all = []
                     for loc in locs:
@@ -870,39 +886,30 @@ def generate_request_accept_view(request, question_id):
                             if isinstance(page, int) and page >= 0:
                                 page = page + 1
                             rects = occ.get("rects") or []
-                            # Each rect is [x0, y0, x1, y1]
                             for r in rects:
-                                rects_all.append({
-                                    "page": page,
-                                    "rect": r,
-                                })
+                                rects_all.append({"page": page, "rect": r})
 
                     val_obj.highlights = rects_all
                     val_obj.save()
-                    logger.warning(
-                        "[HIGHLIGHT SAVED] review=%s entry=%s col(name)=%r via desc=%r highlights=%r",
-                        review.id, entry_id, column.name, desc_key, val_obj.highlights
-                    )
+                    # logger.warning(...) 
 
         persist_answers()
-        # log: log when LLM answers have been successfully persisted
-        _append_log("Answer_Obtained", None)
-        # 4) Normal return (compatible with old frontend + new structure)
+        llm_response_str = json.dumps(llm_text, ensure_ascii=False)
+        _append_log("Answer_Obtained", llm_response_str)
+        
         return JsonResponse({
             "ok": True,
-            "columns": columns_obj,
+            "columns": columns_obj, # 返回前端原始请求的列结构，保持兼容
             "urls": urls_obj,
-            "llm_text": llm_text,
+            "llm_text": llm_text,   # 只包含本次生成的答案
             "results": results_per_url,
             "qa": qa_only,
             "highlights": highlights_only,
-            "skipped_locked": skipped_locked,  # NEW: Returned to frontend to indicate which cells were locked and not updated
         }, status=200)
 
     except Exception as e:
         logger.exception("generate_request_accept_view failed")
         return JsonResponse({"ok": False, "error": str(e)}, status=400)
-
 
 @require_GET
 def get_entry_highlights(request, review_id, entry_id):

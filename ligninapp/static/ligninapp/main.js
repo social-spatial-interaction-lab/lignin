@@ -113,7 +113,7 @@ $(document).ready(() => {
 });
 
 
-function reloadPapers() {
+function reloadPapers(callback) {
   if (!questionID) { console.warn("reloadPapers(): missing questionID"); return; }
 
   $.get(`/question/${questionID}/papers/`, {}, function (payload) {
@@ -126,236 +126,123 @@ function reloadPapers() {
     const fieldToColId = Object.fromEntries(
       (meta || []).map(({ id, name }) => [name, id])
     );
-    // --- DEBUG: inspect column id mapping ---
-    window.DEBUG_EDITED = true; // turn off by setting false
-    if (window.DEBUG_EDITED) {
-      try {
-        console.group("[EditedDebug] fieldToColId mapping");
-        console.table((meta || []).map(({ id, name, title }) => ({ field: name, column_pk: id, title })));
-        console.log("fieldToColId keys:", Object.keys(fieldToColId));
-        console.groupEnd();
-      } catch (e) { console.warn("[EditedDebug] mapping log failed", e); }
-  }
-    // NEW: Cache the edited_map returned by the backend (sparse structure)
-    const editedMap = (payload && payload.edited_map) ? payload.edited_map : {};
-    const isEdited = (entryId, field) => {
-      const m = editedMap[String(entryId)];
-      return !!(m && m[field] === true);
-    };
-    window.isEdited = isEdited;
-    const setEdited = (entryId, field, bool) => {
-      const key = String(entryId);
-      if (!editedMap[key]) editedMap[key] = {};
-      if (bool) editedMap[key][field] = true;
-      else delete editedMap[key][field]; // Sparse structure: remove the key directly when false
-    };
-
-    // NEW: Utility – render an “Edited” badge at the bottom-left of a cell (hover → ✕, click → unlock)
-    function renderEditedBadge(cell) {
-      //console.debug("render entered")
-      const colDef  = cell.getColumn().getDefinition();
-      const field   = colDef.field;
-      const rowData = cell.getRow().getData();
-      const entryId = rowData.entry_id;
-      //console.debug("11");
-      if (!entryId || !field || field === "file_name") return;
-      const el = cell.getElement();
-      // If not locked, remove any existing badge
-
-      if (!isEdited(entryId, field)) {
-        const prev = cell.getElement().querySelector(".cell-edited-badge");
-        if (prev) {
-          console.debug("[EditedBadge] removed");
-          prev.remove();
-          el.classList.remove("has-edited-badge");
-          el.style.removeProperty("--edited-badge-space");
-        }
-        return;
-      }
-
-      // If locked: create a badge if none exists
-      let badge = cell.getElement().querySelector(".cell-edited-badge");
-      if (!badge) {
-        badge = document.createElement("span");
-        badge.className = "cell-edited-badge";
-        badge.textContent = "Edited";
-        // Simple inline styles (can be moved to CSS)
-        Object.assign(badge.style, {
-          position: "absolute",
-          left: "4px",
-          bottom: "2px",
-          fontSize: "11px",
-          padding: "0 6px",
-          lineHeight: "16px",
-          border: "1px solid #bbb",
-          borderRadius: "10px",
-          background: "#f5f5f5",
-          color: "#444",
-          cursor: "pointer",
-          userSelect: "none",
-          zIndex: "100  ",
-          pointerEvents: "auto",
-        });
-        badge.addEventListener("mouseenter", () => { badge.textContent = "✕"; });
-        badge.addEventListener("mouseleave", () => { badge.textContent = "Edited"; });
-
-
-        badge.addEventListener("pointerdown", (ev) => {
-          ev.preventDefault();
-          ev.stopPropagation();
-        }, { capture: true });
-
-        badge.addEventListener("click", async (ev) => {
-          ev.preventDefault(); ev.stopPropagation();
-
-          const colId = fieldToColId[field];
-          // --- DEBUG: log click context ---
-          if (window.DEBUG_EDITED) {
-            console.debug("[EditedDebug] click badge", { entryId, field, colId, knownFields: Object.keys(fieldToColId) });
-          }
-
-
-          if (!colId) {
-            console.error(`[EditedDebug] Missing column_pk for field="${field}". Known fields:`, Object.keys(fieldToColId));
-            alert(`Cannot unlock: missing backend column id for field "${field}".`);
-            return;
-          }
-          const url = `/values/${encodeURIComponent(entryId)}/${encodeURIComponent(colId)}/edited/`;
-          try {
-            //const res = await fetch(`/values/${encodeURIComponent(entryId)}/${encodeURIComponent(colId)}/edited/`, {
-            const res = await fetch(url, {
-              method: "POST",
-              headers: { "X-CSRFToken": csrftoken, "Content-Type": "application/json" },
-              body: JSON.stringify({ edited: false }),
-            });
-
-
-            const raw = await res.clone().text();
-            let out = null;
-            try { out = JSON.parse(raw); } catch (_) {}
-
-            if (window.DEBUG_EDITED) {
-              console.debug("[EditedDebug] response", { status: res.status, ok: res.ok, out, rawSnippet: raw?.slice(0, 200) });
-            }
-
-            //if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            //const out = await res.json();
-            if (res.ok && out && out.ok && out.edited === false) {
-              setEdited(entryId, field, false);
-              badge.remove();
-              el.classList.remove("has-edited-badge");
-              el.style.removeProperty("--edited-badge-space");
-            } else {
-              console.warn("unlock failed payload:", out);
-              alert((out && out.error) || "Failed to unlock this cell.");
-            }
-          } catch (e) {
-            console.error("unlock failed", e);
-            alert("Unlock failed: " + e.message);
-          }
-        });
-        // The container must be set to relative positioning to place the absolutely positioned badge
-        //const el = cell.getElement();
-        if (getComputedStyle(el).position === "static") el.style.position = "relative";
-        el.appendChild(badge);
-      }
-      el.classList.add("has-edited-badge");
-      const h = Math.ceil((badge.offsetHeight || 18) + 4);
-      el.style.setProperty("--edited-badge-space", `${h}px`);
-    }
-
 
     const dynamicCols = meta
-      ? meta.map(({ id, name }) => {
+      // CHANGE: Destructure 'description' from the meta object as well
+      ? meta.map(({ id, name, description }) => {
           const titleText = (name === "file_name") ? "File name" : name;
 
-          // If this is the "File name" column, return a custom formatter that adds a hyperlink
-          if (name === "file_name") {
-            return {
-              title: titleText,
-              field: name,
-              editor: false,
-              formatter: function(cell) {
-                const fileName = cell.getValue();
-                if (!fileName) return "";
-                const link = document.createElement("a");
-                link.textContent = fileName;
-                link.href = "#";
-                link.style.color = "#007bff";
-                link.style.textDecoration = "underline";
-                link.addEventListener("click", function (e) {
-                  e.preventDefault();
-                  const rowData = cell.getRow().getData();
-                  const entryId = rowData.entry_id;
-                  const fileUrl = `/media/uploaded_papers/${encodeURIComponent(fileName)}`;
-                  openPaperModal({
-                    id: entryId,
-                    url: fileUrl,
-                    name: fileName,
-                    abstract: ""
-                  });
-                });
-                return link;
-              },
-              titleFormatter: function() {
-                const span = document.createElement('span');
-                span.textContent = titleText;
-                span.style.fontWeight = 'bold';
-                return span;
-              }
-            };
+      if (name === "file_name") {
+        return {
+          title: titleText,
+          field: name,
+          editor: false,
+          formatter: function(cell) {
+            const fileName = cell.getValue();
+            if (!fileName) return "";
+            const link = document.createElement("a");
+            link.textContent = fileName;
+            link.href = "#";
+            link.style.color = "#007bff";
+            link.style.textDecoration = "underline";
+            link.addEventListener("click", function (e) {
+              e.preventDefault();
+              const rowData = cell.getRow().getData();
+              openPaperModal({ id: rowData.entry_id, url: `/media/uploaded_papers/${encodeURIComponent(fileName)}`, name: fileName });
+            });
+            return link;
+          },
+          titleFormatter: function() {
+            const span = document.createElement('span');
+            span.textContent = titleText;
+            span.style.fontWeight = 'bold';
+            return span;
           }
+        };
+      }
 
-          // Otherwise, follow the original logic (with a delete button)
+          // Otherwise, follow the original logic (with a delete button AND now an Edit button)
           return {
             title: titleText,
             field: name,
-            editor: "input",
+            editor: "textarea", 
+            editorParams: {
+                verticalNavigation: "editor", 
+                shiftEnterSubmit: true,       
+            },
 
             // Render a title and a small button in the column header
             titleFormatter: function (column, formatterParams, onRendered) {
-              // Determine whether the column is protected
+              // ... existing protection check ...
               if (name === "file_name" || titleText === "File name") {
-                const span = document.createElement("span");
-                span.textContent = titleText;
-                span.style.fontWeight = "bold";
-                return span;
+                 /* ... existing simple span return ... */
+                 const span = document.createElement("span");
+                 span.textContent = titleText;
+                 span.style.fontWeight = "bold";
+                 return span;
               }
 
-              // Get the header cell element of this column
-              // and ensure it can host absolutely-positioned children.
+              // Get the header cell element
               const headerEl = column && typeof column.getElement === "function"
                 ? column.getElement()
                 : null;
-              if (headerEl && getComputedStyle(headerEl).position === "static") {
-                headerEl.style.position = "relative";
+              
+              if (headerEl) {
+                  // Ensure relative positioning for the absolute delete button
+                  if (getComputedStyle(headerEl).position === "static") {
+                    headerEl.style.position = "relative";
+                  }
+                  // Adjust padding to prevent text from hitting the delete button
+                  headerEl.style.paddingRight = "24px"; 
               }
 
-              // Text container: takes full width of header,
-              // leaves some right padding so the button will not overlap text.
+              // --- START MODIFICATION: Layout for Edit Button + Text ---
+              
+              // 1. Create the main flex container
               const container = document.createElement("div");
-              container.style.width = "100%";
-              container.style.overflow = "hidden";
-              container.style.textOverflow = "ellipsis";
-              container.style.whiteSpace = "nowrap";
-              container.style.paddingRight = "28px"; // reserve space for the × button
+              container.className = "custom-header-container"; // Use the class we defined in HTML
 
+              // 2. Create the "Edit" button
+              const editBtn = document.createElement("button");
+              editBtn.textContent = "Edit";
+              editBtn.className = "header-edit-btn"; // Use CSS class
+              editBtn.title = "Edit column name/description";
+              
+              // Prevent click propagation (so it doesn't trigger Tabulator sorting immediately)
+              editBtn.addEventListener("click", (e) => {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  // Call the global function defined in question.html
+                  if (typeof window.openEditColumnModal === "function") {
+                      // Pass the current description (ensure backend sends it in 'meta')
+                      window.openEditColumnModal(id, name, description || "");
+                  } else {
+                      alert("Edit function not loaded.");
+                  }
+              });
+
+              container.appendChild(editBtn);
+
+              // 3. Create the text span
               const span = document.createElement("span");
               span.textContent = titleText;
               span.style.fontWeight = "bold";
               container.appendChild(span);
 
+              // --- END MODIFICATION ---
+
+              // ... existing Delete Button Logic ...
               const btn = document.createElement("button");
               btn.textContent = "✕";
               btn.title = "Remove this column from this review";
-              btn.className = "column-remove-button";  // optional: for custom CSS
+              btn.className = "column-remove-button"; 
 
               // Style: float above text, pinned to right side of header cell
               Object.assign(btn.style, {
                 position: "absolute",
-                top: "50%",
+                top: "4px",        // Adjusted top position
                 right: "4px",
-                transform: "translateY(-50%)",
+                // ... other existing styles ...
                 padding: "0 6px",
                 lineHeight: "16px",
                 color: "#b00",
@@ -363,51 +250,39 @@ function reloadPapers() {
                 border: "1px solid #ccc",
                 borderRadius: "4px",
                 cursor: "pointer",
-                zIndex: "2",          // make sure it stays above text
+                zIndex: "2",
               });
 
-    btn.addEventListener("click", async (ev) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      if (!confirm(`Remove column "${name}" from this review? This will delete its cells in this review.`)) return;
-      try {
-        const res = await fetch(
-          `/review/${encodeURIComponent(questionID)}/columns/${encodeURIComponent(id)}/remove/`,
-          {
-            method: "POST",
-            headers: { "X-CSRFToken": csrftoken },
-          }
-        );
-        if (!res.ok) {
-          const txt = await res.text();
-          throw new Error(`HTTP ${res.status}: ${txt}`);
-        }
-        const out = await res.json();
-        if (out.ok) {
-          reloadPapers();
-        } else {
-          alert(out.error || "Failed to remove column.");
-        }
-      } catch (err) {
-        console.error(err);
-        alert("Remove failed: " + err.message);
-      }
-    });
+              btn.addEventListener("click", async (ev) => {
+                  /* ... existing delete logic ... */
+                  ev.preventDefault();
+                  ev.stopPropagation();
+                  if (!confirm(`Remove column "${name}" from this review?`)) return;
+                  // ... fetch call ...
+                  // (Keep existing fetch logic)
+                  try {
+                    const res = await fetch(
+                      `/review/${encodeURIComponent(questionID)}/columns/${encodeURIComponent(id)}/remove/`,
+                      { method: "POST", headers: { "X-CSRFToken": csrftoken } }
+                    );
+                    // ... handle response ...
+                    if(res.ok) reloadPapers(); // etc
+                  } catch(e) { console.error(e); }
+              });
 
-    // Attach the button to the header cell if we have it;
-    // otherwise, fall back to putting it in the container.
-    if (headerEl) {
-      // Remove any previous button to avoid duplicates after re-render
-      const existing = headerEl.querySelector(".column-remove-button");
-      if (existing) existing.remove();
-      headerEl.appendChild(btn);
-    } else {
-      container.appendChild(btn);
-    }
+              // Attach the delete button (Keep existing logic)
+              if (headerEl) {
+                const existing = headerEl.querySelector(".column-remove-button");
+                if (existing) existing.remove();
+                headerEl.appendChild(btn);
+              } else {
+                // Fallback
+                container.appendChild(btn); 
+              }
 
-    return container;
-  },
-};
+              return container;
+            },
+          };
         })
       : (Array.isArray(payload.columns) ? payload.columns.map((name) => ({
           title: (name === "file_name") ? "File name" : name,
@@ -481,26 +356,11 @@ function reloadPapers() {
       renderHorizontal: "virtual",
       variableHeight: true,
       columns,
-      rowFormatter: function(row) {
-        const cells = row.getCells();
-    
-        cells.forEach(function(cell) {
-          const colDef = cell.getColumn().getDefinition();
-          const field  = colDef && colDef.field;
-    
-          // Skip non-data / special columns
-          if (!field || field === "file_name") return;
-          if (!colDef.editor) return;  // only for editable columns
-    
-          if (window.DEBUG_EDITED) {
-            const entryId = cell.getRow().getData().entry_id;
-          }
-    
-          // This will check isEdited(...) internally and add/remove the badge
-          renderEditedBadge(cell);
-        });
-      },
+      movableColumns: true,
+
     });
+
+    
     let reverting = false; //  Placed in module scope
 
     table.on("cellEdited", async function (cell) {
@@ -528,12 +388,12 @@ function reloadPapers() {
           body: JSON.stringify({
             value: (newVal ?? "").toString(),
             notes: "",
-            lock_after_save: true
+            //lock_after_save: true
           }),
         });
     
         if (!res.ok) {
-          //  Use restoreOldValue() and a flag to prevent triggering cellEdited again
+
           reverting = true;
           cell.restoreOldValue();
           reverting = false;
@@ -541,29 +401,19 @@ function reloadPapers() {
           const text = await res.text();
           throw new Error(`HTTP ${res.status}: ${text}`);
         }
-
-        //renderEditedBadge(cell);
-        setEdited(entryId, field, true); 
-        renderEditedBadge(cell);  
+ 
 
       } catch (err) {
         console.error("[save cell] failed:", err);
         alert("save failed" + err.message);
       }
     });
-    // NEW: whenever a cell edit is cancelled / closed without change,
-    // re-evaluate the Edited badge based on the current frontend editedMap.
-    table.on("cellEditCancelled", function (cell) {
-      const colDef = cell.getColumn().getDefinition();
-      const field  = colDef && colDef.field;
 
-      // Skip non-data / special columns, and non-editable ones
-      if (!field || field === "file_name") return;
-      if (!colDef.editor) return;
-
-      // This will read isEdited(entryId, field) and add/remove the badge
-      renderEditedBadge(cell);
-    });
+    if (typeof callback === "function") {
+      console.log("Table reloaded, triggering callback...");
+      // 稍微延迟 100ms 确保 DOM 渲染完毕，避免 generateAnswers 取不到元素
+      setTimeout(callback, 100);
+    }
     
   }, 'json');
 }
@@ -1023,6 +873,8 @@ function toggleUploadModal(show) {
 }
 
 // Bind upload form for AJAX submission: automatically refresh EAV table upon success
+/* --- main.js --- */
+
 function bindUploadFormAjax() {
   const uploadForm = document.querySelector('#uploadModal form');
   if (!uploadForm) return;
@@ -1044,13 +896,21 @@ function bindUploadFormAjax() {
         throw new Error(`Upload failed: HTTP ${res.status}: ${text}`);
       }
 
-      // On success: close modal, clear file input, and refresh table
+      // On success: close modal, clear file input
       toggleUploadModal(false);
       const fileInput = uploadForm.querySelector('input[type="file"]');
       if (fileInput) fileInput.value = "";
-      reloadPapers();
+      
+      console.log("[upload] success, reloading papers and generating answers...");
 
-      console.log("[upload] success");
+      // === 【修改】传入 generateAnswers 作为回调 ===
+      // 注意：generateAnswers 是全局函数 (window.generateAnswers)
+      reloadPapers(() => {
+          if (typeof generateAnswers === "function") {
+              generateAnswers();
+          }
+      });
+
     } catch (err) {
       console.error(err);
       alert("Upload failed: " + err.message);
@@ -1059,12 +919,17 @@ function bindUploadFormAjax() {
 }
 
 // Display answers. Input: llmText = data.llm_text, table = your Tabulator instance
-function applyLlmTextToTabulator(llmText, table, isEdited){
+function applyLlmTextToTabulator(llmText, table, isEdited) {
   if (!Array.isArray(llmText)) return;
 
-  const FILE_COL_TITLE = "File name"; // If  column title differs, change it here
+  // FIX: Capture the scroll position ONCE before any updates occur.
+  // This prevents the "dirty read" issue where later rows read a scroll position 
+  // that has already been shifted by previous row updates.
+  const holder = table.element.querySelector(".tabulator-tableholder");
+  const globalSavedScrollTop = holder ? holder.scrollTop : 0;
 
-
+  // Map column titles to their internal field names
+  const FILE_COL_TITLE = "File name";
   const titleToField = new Map();
   table.getColumns().forEach(col => {
     const def = col.getDefinition();
@@ -1073,23 +938,28 @@ function applyLlmTextToTabulator(llmText, table, isEdited){
     }
   });
 
-
   const fileField = titleToField.get(FILE_COL_TITLE) || FILE_COL_TITLE;
 
-
+  // Pre-calculate a map of Filename -> Row Component for faster lookups
   const rowByFilename = new Map();
   table.getRows().forEach(row => {
     const d = row.getData();
-    const fname = (d[fileField] || "").toString().trim(); // Use the field value!
+    // Ensure we handle potential null/undefined values safely
+    const fname = (d[fileField] || "").toString().trim();
     if (fname) rowByFilename.set(fname, row);
   });
 
-
+  // Helper to extract filename from a full URL
   const filenameFromUrl = (url) => {
     if (!url) return null;
-    try { return url.split("/").pop(); } catch { return null; }
+    try {
+      return url.split("/").pop();
+    } catch {
+      return null;
+    }
   };
 
+  // Iterate through the LLM results and apply updates
   llmText.forEach(item => {
     const fname = filenameFromUrl(item.url);
     if (!fname) return;
@@ -1102,22 +972,33 @@ function applyLlmTextToTabulator(llmText, table, isEdited){
 
     const q2ans = item.answers_by_question || {};
     const patch = {};
-    const entryId = row.getData().entry_id; // NEW
 
+    // Map the incoming answers to the correct Tabulator fields
     Object.entries(q2ans).forEach(([questionTitle, answer]) => {
       const field = titleToField.get(questionTitle) || questionTitle;
       if (answer !== undefined && answer !== null) {
-        // NEW: if edited=true, skip
-        if (typeof isEdited === "function" && isEdited(entryId, field)) return;
         patch[field] = (answer === "N/A") ? "" : answer;
       }
     });
 
+    // Apply the update if there is data
     if (Object.keys(patch).length) {
-      row.update(patch);
+      // Note: We do NOT capture scrollTop here anymore.
+      
+      row.update(patch).then(() => {
+        // FIX: Restore the scroll position to the 'globalSavedScrollTop' captured 
+        // at the very beginning of the function.
+        if (holder) {
+          // Only force the scroll adjustment if the position has actually drifted
+          if (Math.abs(holder.scrollTop - globalSavedScrollTop) > 0) {
+            holder.scrollTop = globalSavedScrollTop;
+          }
+        }
+      });
     }
   });
 }
+
 
 window.applyLlmTextToTabulator ||= applyLlmTextToTabulator;
 

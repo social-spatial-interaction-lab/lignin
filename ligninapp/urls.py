@@ -26,8 +26,8 @@ urlpatterns = [
     path('review/<int:review_id>/columns/<int:column_id>/remove/', views.remove_column_from_review, name='remove-column-from-review'),
     path('review/<int:review_id>/entries/<int:entry_id>/remove/', views.remove_entry_from_review, name='remove-entry-from-review'),
     path('review/<int:review_id>/entries/<int:entry_id>/highlights/', views.get_entry_highlights, name='get-entry-highlights'),
-    path('values/<entry_id>/<int:column_pk>/edited/', views.set_value_edited, name='set-value-edited'),
 
     path("review/<int:review_id>/entries/<int:entry_id>/qa/",views.entry_qa_view, name="entry_qa",),
+    path('review/<int:review_id>/columns/<int:column_id>/edit/', views.edit_column_in_review, name='column-edit'),
 
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
