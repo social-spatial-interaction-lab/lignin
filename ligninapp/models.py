@@ -146,3 +146,47 @@ class UploadedPaper(RulesModel):
             "uploaded_at": self.uploaded_at.strftime("%Y-%m-%d %H:%M"),
             "notes": self.notes or ""
         }
+
+# --- 以下为 Control Group Experiment 新增模型 ---
+
+class ControlGroupTab(models.Model):
+    """
+    代表一个独立的对话选项卡 (Chat Session)。
+    移除了 user 字段，所有访问页面的用户共享这些选项卡。
+    """
+    # 选项卡名称 (例如 tab1, tab2)，允许同名
+    name = models.CharField(max_length=100)
+    
+    # 需求：每个选项卡只允许上传一个文件。
+    attached_file = models.FileField(upload_to='control_group_files/', null=True, blank=True)
+    original_file_name = models.CharField(max_length=255, null=True, blank=True) # 用于前端显示原始文件名
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.name
+
+
+class ControlGroupMessage(models.Model):
+    """
+    代表选项卡内的单条对话消息。
+    """
+    ROLE_CHOICES = [
+        ('user', 'User'),
+        ('llm', 'LLM'),
+    ]
+    
+    # 关联到对应的选项卡 (Django 会自动使用 tab.id 作为外键)
+    tab = models.ForeignKey(ControlGroupTab, on_delete=models.CASCADE, related_name='messages')
+    
+    role = models.CharField(max_length=10, choices=ROLE_CHOICES)
+    text = models.TextField()
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created_at'] # 确保对话总是按时间先后顺序排列
+
+    def __str__(self):
+        return f"[{self.role}] {self.text[:30]}..."

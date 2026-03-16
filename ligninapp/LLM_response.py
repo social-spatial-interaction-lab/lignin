@@ -347,7 +347,7 @@ Answer Format (return exactly this structure):
 
 Rules:
 - Include one and only one response object for each input question, preserving the original question text in the "question" field.
-- "answer" must be concise and factual. Always wrap it with ###ANSWER### and ###ENDANSWER###.
+- "answer" must be concise and factual. Always wrap it with ###ANSWER### and ###ENDANSWER###. Respond in the same language that the user uses to ask the question.
 - "evidence" must be exact verbatim quotes from the Paper Text (exact substring matches), up to 3 items.
 - "confidence" is a float between 0.0 and 1.0.
 - If the Paper Text does not contain sufficient information to answer a question, use:

@@ -31,6 +31,10 @@ from .LLM_response import LLM_entrance
 from django.conf import settings  # log
 from datetime import datetime     # log
 
+# 对照组模型和代码
+from .models import ControlGroupTab, ControlGroupMessage
+from .LLM_control_group import process_control_group_llm
+
 import environ
 env = environ.Env()
 environ.Env.read_env()
@@ -39,6 +43,7 @@ logger = logging.getLogger(__name__)
 
 LOG_INITIALIZED = False  # reset to False on each server start
 LOG_FILE_PATH = None
+CG_LOG_FILE_PATH = None
 
 def _init_log_if_needed():
     """
@@ -116,6 +121,10 @@ def index(request):
     return render(request, template_name="ligninapp/index.html", context={
         "visible_questions": visible_questions
     })
+
+def control_group_view(request):
+    #this is for experiment use only.
+    return render(request, 'ligninapp/control_group.html') 
 
 def get_question(request, question_id):
     question = get_object_or_404(Review, id=question_id)
@@ -1036,3 +1045,247 @@ def entry_qa_view(request, review_id, entry_id):
             "data": data,
         }
     )
+
+
+# ==========================================
+# Control Group Experiment APIs
+# ==========================================
+
+def control_group_view(request):
+    # 【新增】：进入页面时，强制初始化新的日志文件
+    _init_cg_log()
+    return render(request, 'ligninapp/control_group.html') 
+
+
+@require_GET
+def get_cg_tabs(request):
+    """初始化加载：获取所有的 Tabs"""
+    tabs = ControlGroupTab.objects.all().order_by('created_at')
+    data = []
+    
+    for tab in tabs:
+        messages = tab.messages.all().order_by('created_at')
+        msg_list = [{'role': m.role, 'text': m.text} for m in messages]
+        
+        file_info = None
+        if tab.attached_file:
+            file_info = {
+                'name': tab.original_file_name or tab.attached_file.name.split('/')[-1],
+                'url': tab.attached_file.url
+            }
+            
+        data.append({
+            'id': tab.id,
+            'name': tab.name,
+            'messages': msg_list,
+            'file': file_info
+        })
+        
+    return JsonResponse({'ok': True, 'tabs': data})
+
+
+@csrf_exempt
+@require_POST
+def create_cg_tab(request):
+    """新建一个 Tab"""
+    try:
+        payload = json.loads(request.body)
+        name = payload.get('name', 'New Tab')
+    except json.JSONDecodeError:
+        name = 'New Tab'
+        
+    tab = ControlGroupTab.objects.create(name=name)
+    
+    # 【新增】：记录创建 Tab 日志
+    _append_cg_log("Create_Tab", f"Tab ID: {tab.id} | Name: {tab.name}")
+    
+    return JsonResponse({'ok': True, 'id': tab.id, 'name': tab.name})
+
+
+@csrf_exempt
+@require_POST
+def rename_cg_tab(request, tab_id):
+    """重命名指定的 Tab"""
+    tab = get_object_or_404(ControlGroupTab, id=tab_id)
+    try:
+        payload = json.loads(request.body)
+        new_name = payload.get('name', '').strip()
+        if new_name:
+            old_name = tab.name
+            tab.name = new_name
+            tab.save()
+            
+            # 【新增】：记录重命名 Tab 日志
+            _append_cg_log("Rename_Tab", f"Tab ID: {tab_id} | Old: {old_name} -> New: {new_name}")
+            
+            return JsonResponse({'ok': True})
+        return JsonResponse({'ok': False, 'error': 'Name cannot be empty'}, status=400)
+    except json.JSONDecodeError:
+        return JsonResponse({'ok': False, 'error': 'Invalid JSON'}, status=400)
+
+
+@csrf_exempt
+@require_http_methods(["DELETE", "POST"])
+def delete_cg_tab(request, tab_id):
+    """删除指定的 Tab"""
+    tab = get_object_or_404(ControlGroupTab, id=tab_id)
+    tab_name = tab.name
+    tab.delete()
+    
+    # 【新增】：记录删除 Tab 日志
+    _append_cg_log("Delete_Tab", f"Tab ID: {tab_id} | Name: {tab_name}")
+    
+    return JsonResponse({'ok': True})
+
+
+@csrf_exempt
+@require_POST
+def send_cg_message(request):
+    """接收用户消息和文件，并调用 LLM 生成回复"""
+    tab_id = request.POST.get('tab_id')
+    user_text = request.POST.get('message', '').strip()
+    uploaded_file = request.FILES.get('file')
+
+    if not tab_id:
+        return JsonResponse({'ok': False, 'error': 'tab_id is required'}, status=400)
+
+    tab = get_object_or_404(ControlGroupTab, id=tab_id)
+
+    # 1. 如果有新文件上传，覆盖旧文件
+    if uploaded_file:
+        tab.attached_file = uploaded_file
+        tab.original_file_name = uploaded_file.name
+        tab.save()
+
+    # 2. 保存用户的消息
+    if user_text:
+        ControlGroupMessage.objects.create(tab=tab, role='user', text=user_text)
+    elif uploaded_file:
+        ControlGroupMessage.objects.create(tab=tab, role='user', text=f"[Uploaded file: {uploaded_file.name}]")
+
+    if not user_text and not uploaded_file:
+        return JsonResponse({'ok': False, 'error': 'Empty message'}, status=400)
+
+    # 【新增】：合并记录用户的操作（含文本和上传的文件）
+    file_name_log = uploaded_file.name if uploaded_file else "No File"
+    text_log = user_text if user_text else "No Text"
+    _append_cg_log("User_Input", f"Tab ID: {tab_id} | Text: [{text_log}] | File: [{file_name_log}]")
+
+    # 3. 抽象调用 LLM
+    try:
+        llm_response_text = process_control_group_llm(tab.id)
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.exception(f"Control group LLM error for tab {tab.id}")
+        llm_response_text = f"Sorry, an error occurred while processing your request: {str(e)}"
+
+    # 4. 保存 LLM 的回复
+    llm_message = ControlGroupMessage.objects.create(tab=tab, role='llm', text=llm_response_text)
+
+    # 【新增】：记录 LLM 的回复
+    _append_cg_log("LLM_Reply", f"Tab ID: {tab_id} | Response: [{llm_response_text}]")
+
+    return JsonResponse({'ok': True, 'reply': llm_message.text})
+    """
+    接收用户消息和文件，并调用 LLM 生成回复
+    注意：这里前端使用的是 FormData，所以数据在 request.POST 和 request.FILES 中
+    """
+    tab_id = request.POST.get('tab_id')
+    user_text = request.POST.get('message', '').strip()
+    uploaded_file = request.FILES.get('file')
+
+    if not tab_id:
+        return JsonResponse({'ok': False, 'error': 'tab_id is required'}, status=400)
+
+    tab = get_object_or_404(ControlGroupTab, id=tab_id)
+
+    # 1. 如果有新文件上传，覆盖旧文件
+    if uploaded_file:
+        tab.attached_file = uploaded_file
+        tab.original_file_name = uploaded_file.name
+        tab.save()
+
+    # 2. 如果用户发送了文本，保存用户的消息
+    if user_text:
+        ControlGroupMessage.objects.create(
+            tab=tab,
+            role='user',
+            text=user_text
+        )
+    elif uploaded_file:
+        # 如果只传了文件没发文字，我们自动补上一条提示，方便 LLM 知道发生了什么
+        ControlGroupMessage.objects.create(
+            tab=tab,
+            role='user',
+            text=f"[Uploaded file: {uploaded_file.name}]"
+        )
+
+    # 如果既没文字也没文件，直接驳回
+    if not user_text and not uploaded_file:
+        return JsonResponse({'ok': False, 'error': 'Empty message'}, status=400)
+
+    # 3. 核心抽象调用：将构建上下文和请求 LLM 的脏活累活丢给 LLM_control_group.py
+    try:
+        llm_response_text = process_control_group_llm(tab.id)
+    except Exception as e:
+        # 记录异常并给前端返回友好的错误提示
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.exception(f"Control group LLM error for tab {tab.id}")
+        llm_response_text = f"Sorry, an error occurred while processing your request: {str(e)}"
+
+    # 4. 保存 LLM 的回复
+    llm_message = ControlGroupMessage.objects.create(
+        tab=tab,
+        role='llm',
+        text=llm_response_text
+    )
+
+    return JsonResponse({
+        'ok': True,
+        'reply': llm_message.text
+    })
+
+def _init_cg_log():
+    """
+    每次进入 control_group_view 页面时调用，创建新的日志文件。
+    命名规则：Con_LogYYYYMMDD_HHMMSS.log
+    """
+    global CG_LOG_FILE_PATH
+    base_dir = getattr(settings, "BASE_DIR", None)
+    if base_dir is None:
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    log_dir = os.path.join(base_dir, "log")
+    os.makedirs(log_dir, exist_ok=True)
+
+    now = datetime.now()
+    filename = f"Con_Log{now.strftime('%Y%m%d_%H%M%S')}.log"
+    CG_LOG_FILE_PATH = os.path.join(log_dir, filename)
+
+    # 写入第一条进入页面的日志
+    _append_cg_log("Enter_Page", "User entered Control Group Experiment page")
+
+def _append_cg_log(operation: str, content):
+    """
+    追加日志记录到当前的 CG 日志文件中。带时间戳。
+    """
+    global CG_LOG_FILE_PATH
+    if not CG_LOG_FILE_PATH:
+        # 如果由于某种原因没有初始化（比如服务器重启后直接调了API），直接返回，避免报错
+        return
+
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    if content is None or str(content).strip() == "":
+        content_str = "Null"
+    else:
+        # 去掉换行符，保证单条日志在一行内，方便后续数据分析
+        content_str = str(content).replace('\n', ' \\n ')
+
+    line = f"{ts} [{operation}] {content_str}\n"
+    try:
+        with open(CG_LOG_FILE_PATH, "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception as e:
+        logger.error(f"Failed to write CG log: {e}")

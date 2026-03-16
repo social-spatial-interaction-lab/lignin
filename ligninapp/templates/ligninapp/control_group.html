@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM Control Group</title>
+
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+    <style>
+        :root {
+            --border-color: #ccc;
+            --active-bg: #fff;
+            --inactive-bg: #f1f1f1;
+            --primary-color: #007bff;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #fafafa;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            box-sizing: border-box;
+            overflow: hidden;
+        }
+
+        /* --- 选项卡 (Tabs) 样式 --- */
+        .tabs-container {
+            display: flex;
+            align-items: flex-end;
+            border-bottom: 1px solid var(--border-color);
+            margin-bottom: 0;
+        }
+
+        .tab {
+            padding: 10px 15px;
+            background-color: var(--inactive-bg);
+            border: 1px solid var(--border-color);
+            border-bottom: none;
+            border-radius: 8px 8px 0 0;
+            margin-right: 5px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            position: relative;
+            user-select: none;
+        }
+
+        .tab.active {
+            background-color: var(--active-bg);
+            margin-bottom: -1px;
+            padding-bottom: 11px;
+            font-weight: bold;
+            z-index: 1; 
+        }
+
+        .tab-name {
+            outline: none;
+            min-width: 30px;
+            /* 默认不可编辑，移除鼠标指针的文本选择样式 */
+            cursor: pointer; 
+        }
+
+        /* --- 选项卡下拉菜单样式 --- */
+        .tab-menu-container {
+            position: relative;
+            margin-left: 10px;
+        }
+
+        .tab-menu-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+            color: #888;
+            padding: 0 5px;
+            font-size: 16px;
+        }
+
+        .tab-menu-btn:hover {
+            color: #333;
+        }
+
+        .tab-dropdown {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            background: white;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            display: none;
+            flex-direction: column;
+            min-width: 90px;
+            z-index: 100;
+            overflow: hidden;
+        }
+
+        .tab-dropdown.show {
+            display: flex;
+        }
+
+        .dropdown-item {
+            padding: 8px 12px;
+            cursor: pointer;
+            font-size: 14px;
+            color: #333;
+            font-weight: normal;
+        }
+
+        .dropdown-item:hover {
+            background-color: #f1f1f1;
+        }
+
+        .dropdown-item.delete-btn {
+            color: #dc3545; /* 红色警告 */
+        }
+
+        .add-tab-btn {
+            padding: 10px 15px;
+            background: none;
+            border: none;
+            font-size: 18px;
+            cursor: pointer;
+            color: var(--primary-color);
+            margin-bottom: 2px;
+        }
+
+        /* --- 聊天窗口样式 --- */
+        .chat-container {
+            flex-grow: 1;
+            background-color: var(--active-bg);
+            border: 1px solid var(--border-color);
+            border-top: none;
+            border-radius: 0 8px 8px 8px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            min-height: 0;
+            display: none; 
+        }
+
+        .chat-container.active {
+            display: flex;
+        }
+
+        .messages-area {
+            flex-grow: 1;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .message {
+            max-width: 70%;
+            padding: 10px 15px;
+            border-radius: 8px;
+            line-height: 1.5;
+        }
+
+        .message.user {
+            align-self: flex-end;
+            background-color: #e3f2fd;
+        }
+
+        .message.llm {
+            align-self: flex-start;
+            background-color: #f5f5f5;
+            border: 1px solid #eee;
+        }
+
+        /* --- 输入区域样式 --- */
+        .input-area {
+            display: flex;
+            align-items: center;
+            padding: 15px;
+            border-top: 1px solid var(--border-color);
+            background-color: #fff;
+            position: relative;
+        }
+
+        .upload-btn {
+            font-size: 24px;
+            background: none;
+            border: none;
+            cursor: pointer;
+            color: #555;
+            margin-right: 10px;
+        }
+
+        .upload-btn:hover { color: var(--primary-color); }
+
+        .file-input { display: none; }
+
+        .message-input {
+            flex-grow: 1;
+            padding: 10px;
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            font-size: 16px;
+            outline: none;
+        }
+
+        .send-btn {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 20px;
+            margin-left: 10px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+
+        .send-btn:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+
+        .file-badge {
+            position: absolute;
+            top: -30px;
+            left: 50px;
+            background: #e0e0e0;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        
+        .remove-file-btn {
+            cursor: pointer;
+            color: red;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="tabs-container" id="tabsContainer">
+        <button class="add-tab-btn" id="addTabBtn" title="New Tab">+</button>
+    </div>
+
+    <div id="chatWindowsContainer" style="flex-grow: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0;">
+        </div>
+
+    <script>
+        // DOM 元素
+        const tabsContainer = document.getElementById('tabsContainer');
+        const addTabBtn = document.getElementById('addTabBtn');
+        const chatWindowsContainer = document.getElementById('chatWindowsContainer');
+
+        let activeTabId = null;
+
+        // 全局事件：点击页面其他地方时，关闭所有打开的选项卡菜单
+        document.addEventListener('click', () => {
+            document.querySelectorAll('.tab-dropdown.show').forEach(menu => {
+                menu.classList.remove('show');
+            });
+        });
+
+        // ==========================================
+        // 1. 初始化：从后端获取真实数据
+        // ==========================================
+        document.addEventListener('DOMContentLoaded', async () => {
+            try {
+                const response = await fetch('/api/control-group/tabs/');
+                const data = await response.json();
+                
+                if (data.ok && data.tabs.length > 0) {
+                    data.tabs.forEach(tab => createTabUI(tab.id, tab.name, tab.messages, tab.file));
+                    switchTab(data.tabs[0].id);
+                } else {
+                    // 如果数据库里没有任何 tab，向后端请求新建一个
+                    addNewTab();
+                }
+            } catch (error) {
+                console.error("Failed to load data", error);
+            }
+        });
+
+        // ==========================================
+        // 2. 新建选项卡：向后端请求并在数据库创建
+        // ==========================================
+        addTabBtn.addEventListener('click', addNewTab);
+
+        async function addNewTab() {
+            const currentTabCount = document.querySelectorAll('.tab').length;
+            const newName = `tab${currentTabCount + 1}`;
+            
+            try {
+                const response = await fetch('/api/control-group/tabs/create/', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({name: newName})
+                });
+                const data = await response.json();
+                
+                if (data.ok) {
+                    // 使用后端返回的真实 ID 创建 UI
+                    createTabUI(data.id, data.name, [], null);
+                    switchTab(data.id);
+                }
+            } catch (error) {
+                console.error("Failed to create tab", error);
+            }
+        }
+
+        // ==========================================
+        // UI 渲染：创建选项卡和聊天窗口
+        // ==========================================
+        function createTabUI(id, name, messages = [], attachedFile = null) {
+            // 1. 创建 Tab 标签
+            const tabEl = document.createElement('div');
+            tabEl.className = 'tab';
+            tabEl.dataset.id = id;
+
+            const nameSpan = document.createElement('span');
+            nameSpan.className = 'tab-name';
+            nameSpan.innerText = name;
+            nameSpan.contentEditable = false; 
+
+            nameSpan.addEventListener('blur', () => {
+                nameSpan.contentEditable = false;
+                nameSpan.style.cursor = 'pointer';
+                saveTabName(id, nameSpan.innerText);
+            });
+            nameSpan.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    nameSpan.blur();
+                }
+            });
+
+            // 三个点的菜单
+            const menuContainer = document.createElement('div');
+            menuContainer.className = 'tab-menu-container';
+            
+            const menuBtn = document.createElement('button');
+            menuBtn.className = 'tab-menu-btn';
+            menuBtn.innerText = '⋮';
+
+            const dropdown = document.createElement('div');
+            dropdown.className = 'tab-dropdown';
+
+            const renameItem = document.createElement('div');
+            renameItem.className = 'dropdown-item';
+            renameItem.innerText = 'Rename';
+
+            const deleteItem = document.createElement('div');
+            deleteItem.className = 'dropdown-item delete-btn';
+            deleteItem.innerText = 'Delete';
+
+            dropdown.appendChild(renameItem);
+            dropdown.appendChild(deleteItem);
+            menuContainer.appendChild(menuBtn);
+            menuContainer.appendChild(dropdown);
+
+            menuBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                document.querySelectorAll('.tab-dropdown.show').forEach(menu => {
+                    if (menu !== dropdown) menu.classList.remove('show');
+                });
+                dropdown.classList.toggle('show');
+            });
+
+            renameItem.addEventListener('click', (e) => {
+                e.stopPropagation();
+                dropdown.classList.remove('show');
+                nameSpan.contentEditable = true;
+                nameSpan.style.cursor = 'text';
+                nameSpan.focus();
+                document.execCommand('selectAll', false, null);
+            });
+
+            deleteItem.addEventListener('click', (e) => {
+                e.stopPropagation();
+                dropdown.classList.remove('show');
+                deleteTab(id);
+            });
+
+            tabEl.appendChild(nameSpan);
+            tabEl.appendChild(menuContainer);
+            
+            tabEl.addEventListener('click', () => switchTab(id));
+            tabsContainer.insertBefore(tabEl, addTabBtn);
+
+            // 2. 创建对应的聊天内容区
+            const chatEl = document.createElement('div');
+            chatEl.className = 'chat-container';
+            chatEl.id = `chat_${id}`;
+
+            chatEl.innerHTML = `
+                <div class="messages-area" id="msgs_${id}"></div>
+                <div class="input-area">
+                    <div id="fileBadge_${id}" class="file-badge" style="display: none;">
+                        <span class="file-name-text"></span>
+                        <span class="remove-file-btn" onclick="removeFile('${id}')">×</span>
+                    </div>
+                    <button class="upload-btn" onclick="document.getElementById('fileInput_${id}').click()">+</button>
+                    <input type="file" id="fileInput_${id}" class="file-input" onchange="handleFileUpload(event, '${id}')">
+                    <input type="text" id="msgInput_${id}" class="message-input" placeholder="Type your message here...">
+                    <button class="send-btn" id="sendBtn_${id}" onclick="sendMessage('${id}')">Send</button>
+                </div>
+            `;
+            chatWindowsContainer.appendChild(chatEl);
+
+            // 渲染历史消息
+            messages.forEach(msg => appendMessageUI(id, msg.role, msg.text));
+
+            document.getElementById(`msgInput_${id}`).addEventListener('keypress', function (e) {
+                if (e.key === 'Enter') {
+                    sendMessage(id);
+                }
+            });
+        }
+
+        function switchTab(id) {
+            activeTabId = id;
+            // 确保 id 转换为字符串进行比较，因为 dataset 提取出的是字符串
+            const strId = String(id);
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.toggle('active', tab.dataset.id === strId);
+            });
+            document.querySelectorAll('.chat-container').forEach(chat => {
+                chat.classList.toggle('active', chat.id === `chat_${strId}`);
+            });
+            const input = document.getElementById(`msgInput_${id}`);
+            if(input) input.focus();
+        }
+
+        // ==========================================
+        // 3. 删除选项卡：向后端同步
+        // ==========================================
+        async function deleteTab(id) {
+            if (confirm("Are you sure you want to delete this tab and all its messages?")) {
+                try {
+                    const response = await fetch(`/api/control-group/tabs/${id}/delete/`, { method: 'POST' });
+                    const data = await response.json();
+                    
+                    if (data.ok) {
+                        const tabEl = document.querySelector(`.tab[data-id="${id}"]`);
+                        const chatEl = document.getElementById(`chat_${id}`);
+                        
+                        if (tabEl) tabEl.remove();
+                        if (chatEl) chatEl.remove();
+
+                        if (String(activeTabId) === String(id)) {
+                            const remainingTabs = document.querySelectorAll('.tab');
+                            if (remainingTabs.length > 0) {
+                                switchTab(remainingTabs[remainingTabs.length - 1].dataset.id);
+                            } else {
+                                addNewTab();
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error("Failed to delete tab", error);
+                }
+            }
+        }
+
+        // ==========================================
+        // 4. 重命名选项卡：向后端同步
+        // ==========================================
+        async function saveTabName(id, newName) {
+            try {
+                await fetch(`/api/control-group/tabs/${id}/rename/`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({name: newName})
+                });
+            } catch (error) {
+                console.error("Failed to rename tab", error);
+            }
+        }
+
+        // 文件上传 UI 逻辑
+        function handleFileUpload(event, id) {
+            const file = event.target.files[0];
+            if (file) {
+                showFileBadge(id, file.name);
+            }
+        }
+
+        function showFileBadge(id, fileName) {
+            const badge = document.getElementById(`fileBadge_${id}`);
+            badge.querySelector('.file-name-text').innerText = fileName;
+            badge.style.display = 'flex';
+        }
+
+        function removeFile(id) {
+            const fileInput = document.getElementById(`fileInput_${id}`);
+            if (fileInput) fileInput.value = ''; 
+            const badge = document.getElementById(`fileBadge_${id}`);
+            if (badge) badge.style.display = 'none';
+        }
+
+        // ==========================================
+        // 5. 消息收发：支持 Markdown
+        // ==========================================
+        async function sendMessage(id) {
+            const inputEl = document.getElementById(`msgInput_${id}`);
+            const sendBtn = document.getElementById(`sendBtn_${id}`);
+            const fileInput = document.getElementById(`fileInput_${id}`);
+            const text = inputEl.value.trim();
+            const file = fileInput.files[0];
+
+            if (!text && !file) return; 
+
+            // 前端 UI 更新
+            if (text) appendMessageUI(id, 'user', text);
+            if (file) appendMessageUI(id, 'user', `[Uploaded file: ${file.name}]`);
+
+            sendBtn.disabled = true;
+            inputEl.value = ''; 
+            removeFile(id); 
+
+            const formData = new FormData();
+            formData.append('tab_id', id);
+            if (text) formData.append('message', text);
+            if (file) formData.append('file', file);
+
+            try {
+                const response = await fetch('/api/control-group/tabs/message/', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+
+                if (response.ok && data.ok) {
+                    appendMessageUI(id, 'llm', data.reply);
+                } else {
+                    console.error("Backend Error:", data.error);
+                    appendMessageUI(id, 'llm', `Error: ${data.error || 'Unknown error occurred.'}`);
+                }
+            } catch (error) {
+                console.error("Failed to send request", error);
+                appendMessageUI(id, 'llm', "Sorry, there was a network error communicating with the server.");
+            } finally {
+                sendBtn.disabled = false;
+                inputEl.focus();
+            }
+        }
+
+        function appendMessageUI(id, role, text) {
+            const msgArea = document.getElementById(`msgs_${id}`);
+            const msgDiv = document.createElement('div');
+            msgDiv.className = `message ${role}`;
+            
+            if (role === 'llm' && typeof marked !== 'undefined') {
+                msgDiv.innerHTML = marked.parse(text);
+            } else {
+                msgDiv.innerText = text; 
+            }
+            
+            msgArea.appendChild(msgDiv);
+            msgArea.scrollTop = msgArea.scrollHeight;
+        }
+    </script>
+</body>
+</html>

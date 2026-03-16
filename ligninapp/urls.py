@@ -29,5 +29,12 @@ urlpatterns = [
 
     path("review/<int:review_id>/entries/<int:entry_id>/qa/",views.entry_qa_view, name="entry_qa",),
     path('review/<int:review_id>/columns/<int:column_id>/edit/', views.edit_column_in_review, name='column-edit'),
+    #control group experiment
+    path('control-group/', views.control_group_view, name='control_group'),
+    path('api/control-group/tabs/', views.get_cg_tabs, name='cg_get_tabs'),
+    path('api/control-group/tabs/create/', views.create_cg_tab, name='cg_create_tab'),
+    path('api/control-group/tabs/<int:tab_id>/rename/', views.rename_cg_tab, name='cg_rename_tab'),
+    path('api/control-group/tabs/<int:tab_id>/delete/', views.delete_cg_tab, name='cg_delete_tab'),
+    path('api/control-group/tabs/message/', views.send_cg_message, name='cg_send_message'),
 
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
